@@ -1,0 +1,131 @@
+{
+  "generated_at": "2026-09-03T11:23:36.423018+00:00",
+  "source_datasets": [
+    "ACNE04 (Wu et al., ICCV 2019) -- academic use only; local copy",
+    "FFHQ 256px clean-face subset (100 crops) -- see clear_faces_manifest.json"
+  ],
+  "num_crops": 1519,
+  "num_acne04": 1419,
+  "num_clear_faces": 100,
+  "crop_size": 224,
+  "split": {
+    "train": 1216,
+    "val": 303,
+    "val_frac": 0.2,
+    "seed": 42,
+    "stratified_by": "acne_severity"
+  },
+  "columns": {
+    "acne_severity": {
+      "source": "REAL ground truth (ACNE04) + asserted 'clear' (FFHQ)",
+      "method": "ACNE04 Hayashi grade from the 'levleN_' filename prefix; FFHQ crops assigned 'clear' (curated clean faces).",
+      "classes": [
+        "clear",
+        "mild",
+        "moderate",
+        "severe",
+        "very_severe"
+      ],
+      "mapping": {
+        "-1": "clear (FFHQ)",
+        "0": "mild",
+        "1": "moderate",
+        "2": "severe",
+        "3": "very_severe"
+      },
+      "distribution_train": {
+        "mild": 390,
+        "moderate": 494,
+        "severe": 143,
+        "clear": 80,
+        "very_severe": 109
+      },
+      "distribution_val": {
+        "mild": 97,
+        "moderate": 123,
+        "clear": 20,
+        "very_severe": 27,
+        "severe": 36
+      }
+    },
+    "skin_type": {
+      "source": "DISTILLED pseudo-labels (ACNE04) + asserted 'normal' (FFHQ)",
+      "method": "local ViT teacher inference (once), argmax + combination rule; FFHQ crops assigned 'normal'.",
+      "classes": [
+        "dry",
+        "normal",
+        "oily",
+        "combination"
+      ],
+      "teacher": "dima806/skin_types_image_detection (local, Apache-2.0)",
+      "teacher_classes": [
+        "dry",
+        "normal",
+        "oily"
+      ],
+      "combination_rule": "P(dry) >= 0.4 and P(oily) >= 0.4",
+      "combination_assigned": 151,
+      "label_distribution": {
+        "dry": 705,
+        "oily": 563,
+        "combination": 151
+      },
+      "domain_limitation": "teacher was applied to ACNE04 acne-patient faces; the FFHQ crops add the 'normal' class the teacher never produced. Documented for the viva.",
+      "distribution_train": {
+        "oily": 444,
+        "combination": 130,
+        "dry": 562,
+        "normal": 80
+      },
+      "distribution_val": {
+        "combination": 21,
+        "oily": 119,
+        "dry": 143,
+        "normal": 20
+      }
+    },
+    "pigmentation": {
+      "source": "HEURISTIC weak labels (ACNE04) + asserted 'normal' (FFHQ)",
+      "method": "z(std of CIELAB L* over skin) + z(black-hat dark-spot area fraction), averaged, tertile-bucketed on ACNE04; FFHQ crops assigned 'normal'.",
+      "classes": [
+        "normal",
+        "mild",
+        "marked"
+      ],
+      "components": [
+        "cielab_L_std",
+        "darkspot_fraction"
+      ],
+      "combine": "0.5*zscore(L_std) + 0.5*zscore(darkspot_fraction)",
+      "percentile_cuts_p33_p66": [
+        -0.1653,
+        0.2941
+      ],
+      "raw_means": {
+        "L_std": 39.311,
+        "darkspot_fraction": 0.10886
+      },
+      "note": "No trained pigmentation model or labelled facial dataset exists. These are documented weak labels; the resulting head is the weakest of the three.",
+      "distribution_train": {
+        "normal": 464,
+        "mild": 379,
+        "marked": 373
+      },
+      "distribution_val": {
+        "marked": 99,
+        "mild": 94,
+        "normal": 110
+      }
+    }
+  },
+  "clear_face_labels": {
+    "skin_type": "normal",
+    "acne_severity": "clear",
+    "pigmentation": "normal"
+  },
+  "skipped": {
+    "unreadable": 0,
+    "no_grade": 0,
+    "crop_failed": 0
+  }
+}

@@ -1,0 +1,415 @@
+{
+  "generated_at": "2026-09-03T11:11:14.352735+00:00",
+  "source_dataset": "bitmind/ffhq-256 (FFHQ 256px subset, Hugging Face Hub)",
+  "source_note": "FFHQ = Flickr-Faces-HQ (Karras et al., NVIDIA). Images CC BY 2.0 / CC BY-NC / public-domain mix per the FFHQ LICENSE; academic/research use.",
+  "crop_size": 224,
+  "count": 100,
+  "assigned_labels": {
+    "skin_type": "normal",
+    "acne_severity": "clear",
+    "pigmentation": "normal"
+  },
+  "label_basis": "FFHQ portraits are curated, high-quality, predominantly clear-skinned faces. Labels are asserted (weak) ground truth for the 'normal/clear' classes that ACNE04 cannot provide. Documented for the viva.",
+  "rows": [
+    {
+      "file": "clear_0000.jpg",
+      "source_row": 0
+    },
+    {
+      "file": "clear_0001.jpg",
+      "source_row": 1
+    },
+    {
+      "file": "clear_0002.jpg",
+      "source_row": 2
+    },
+    {
+      "file": "clear_0003.jpg",
+      "source_row": 3
+    },
+    {
+      "file": "clear_0004.jpg",
+      "source_row": 4
+    },
+    {
+      "file": "clear_0005.jpg",
+      "source_row": 5
+    },
+    {
+      "file": "clear_0006.jpg",
+      "source_row": 6
+    },
+    {
+      "file": "clear_0007.jpg",
+      "source_row": 7
+    },
+    {
+      "file": "clear_0008.jpg",
+      "source_row": 8
+    },
+    {
+      "file": "clear_0009.jpg",
+      "source_row": 9
+    },
+    {
+      "file": "clear_0010.jpg",
+      "source_row": 10
+    },
+    {
+      "file": "clear_0011.jpg",
+      "source_row": 11
+    },
+    {
+      "file": "clear_0012.jpg",
+      "source_row": 12
+    },
+    {
+      "file": "clear_0013.jpg",
+      "source_row": 13
+    },
+    {
+      "file": "clear_0014.jpg",
+      "source_row": 14
+    },
+    {
+      "file": "clear_0015.jpg",
+      "source_row": 15
+    },
+    {
+      "file": "clear_0016.jpg",
+      "source_row": 16
+    },
+    {
+      "file": "clear_0017.jpg",
+      "source_row": 17
+    },
+    {
+      "file": "clear_0018.jpg",
+      "source_row": 18
+    },
+    {
+      "file": "clear_0019.jpg",
+      "source_row": 19
+    },
+    {
+      "file": "clear_0020.jpg",
+      "source_row": 20
+    },
+    {
+      "file": "clear_0021.jpg",
+      "source_row": 21
+    },
+    {
+      "file": "clear_0022.jpg",
+      "source_row": 22
+    },
+    {
+      "file": "clear_0023.jpg",
+      "source_row": 23
+    },
+    {
+      "file": "clear_0024.jpg",
+      "source_row": 24
+    },
+    {
+      "file": "clear_0025.jpg",
+      "source_row": 25
+    },
+    {
+      "file": "clear_0026.jpg",
+      "source_row": 26
+    },
+    {
+      "file": "clear_0027.jpg",
+      "source_row": 27
+    },
+    {
+      "file": "clear_0028.jpg",
+      "source_row": 28
+    },
+    {
+      "file": "clear_0029.jpg",
+      "source_row": 29
+    },
+    {
+      "file": "clear_0030.jpg",
+      "source_row": 30
+    },
+    {
+      "file": "clear_0031.jpg",
+      "source_row": 31
+    },
+    {
+      "file": "clear_0032.jpg",
+      "source_row": 32
+    },
+    {
+      "file": "clear_0033.jpg",
+      "source_row": 33
+    },
+    {
+      "file": "clear_0034.jpg",
+      "source_row": 34
+    },
+    {
+      "file": "clear_0035.jpg",
+      "source_row": 35
+    },
+    {
+      "file": "clear_0036.jpg",
+      "source_row": 36
+    },
+    {
+      "file": "clear_0037.jpg",
+      "source_row": 37
+    },
+    {
+      "file": "clear_0038.jpg",
+      "source_row": 38
+    },
+    {
+      "file": "clear_0039.jpg",
+      "source_row": 39
+    },
+    {
+      "file": "clear_0040.jpg",
+      "source_row": 40
+    },
+    {
+      "file": "clear_0041.jpg",
+      "source_row": 41
+    },
+    {
+      "file": "clear_0042.jpg",
+      "source_row": 42
+    },
+    {
+      "file": "clear_0043.jpg",
+      "source_row": 43
+    },
+    {
+      "file": "clear_0044.jpg",
+      "source_row": 44
+    },
+    {
+      "file": "clear_0045.jpg",
+      "source_row": 45
+    },
+    {
+      "file": "clear_0046.jpg",
+      "source_row": 46
+    },
+    {
+      "file": "clear_0047.jpg",
+      "source_row": 47
+    },
+    {
+      "file": "clear_0048.jpg",
+      "source_row": 48
+    },
+    {
+      "file": "clear_0049.jpg",
+      "source_row": 49
+    },
+    {
+      "file": "clear_0050.jpg",
+      "source_row": 50
+    },
+    {
+      "file": "clear_0051.jpg",
+      "source_row": 51
+    },
+    {
+      "file": "clear_0052.jpg",
+      "source_row": 52
+    },
+    {
+      "file": "clear_0053.jpg",
+      "source_row": 53
+    },
+    {
+      "file": "clear_0054.jpg",
+      "source_row": 54
+    },
+    {
+      "file": "clear_0055.jpg",
+      "source_row": 55
+    },
+    {
+      "file": "clear_0056.jpg",
+      "source_row": 56
+    },
+    {
+      "file": "clear_0057.jpg",
+      "source_row": 57
+    },
+    {
+      "file": "clear_0058.jpg",
+      "source_row": 58
+    },
+    {
+      "file": "clear_0059.jpg",
+      "source_row": 59
+    },
+    {
+      "file": "clear_0060.jpg",
+      "source_row": 60
+    },
+    {
+      "file": "clear_0061.jpg",
+      "source_row": 61
+    },
+    {
+      "file": "clear_0062.jpg",
+      "source_row": 62
+    },
+    {
+      "file": "clear_0063.jpg",
+      "source_row": 63
+    },
+    {
+      "file": "clear_0064.jpg",
+      "source_row": 64
+    },
+    {
+      "file": "clear_0065.jpg",
+      "source_row": 65
+    },
+    {
+      "file": "clear_0066.jpg",
+      "source_row": 66
+    },
+    {
+      "file": "clear_0067.jpg",
+      "source_row": 67
+    },
+    {
+      "file": "clear_0068.jpg",
+      "source_row": 68
+    },
+    {
+      "file": "clear_0069.jpg",
+      "source_row": 69
+    },
+    {
+      "file": "clear_0070.jpg",
+      "source_row": 70
+    },
+    {
+      "file": "clear_0071.jpg",
+      "source_row": 71
+    },
+    {
+      "file": "clear_0072.jpg",
+      "source_row": 72
+    },
+    {
+      "file": "clear_0073.jpg",
+      "source_row": 73
+    },
+    {
+      "file": "clear_0074.jpg",
+      "source_row": 74
+    },
+    {
+      "file": "clear_0075.jpg",
+      "source_row": 75
+    },
+    {
+      "file": "clear_0076.jpg",
+      "source_row": 76
+    },
+    {
+      "file": "clear_0077.jpg",
+      "source_row": 77
+    },
+    {
+      "file": "clear_0078.jpg",
+      "source_row": 78
+    },
+    {
+      "file": "clear_0079.jpg",
+      "source_row": 79
+    },
+    {
+      "file": "clear_0080.jpg",
+      "source_row": 80
+    },
+    {
+      "file": "clear_0081.jpg",
+      "source_row": 81
+    },
+    {
+      "file": "clear_0082.jpg",
+      "source_row": 82
+    },
+    {
+      "file": "clear_0083.jpg",
+      "source_row": 83
+    },
+    {
+      "file": "clear_0084.jpg",
+      "source_row": 84
+    },
+    {
+      "file": "clear_0085.jpg",
+      "source_row": 85
+    },
+    {
+      "file": "clear_0086.jpg",
+      "source_row": 86
+    },
+    {
+      "file": "clear_0087.jpg",
+      "source_row": 87
+    },
+    {
+      "file": "clear_0088.jpg",
+      "source_row": 88
+    },
+    {
+      "file": "clear_0089.jpg",
+      "source_row": 89
+    },
+    {
+      "file": "clear_0090.jpg",
+      "source_row": 90
+    },
+    {
+      "file": "clear_0091.jpg",
+      "source_row": 91
+    },
+    {
+      "file": "clear_0092.jpg",
+      "source_row": 92
+    },
+    {
+      "file": "clear_0093.jpg",
+      "source_row": 93
+    },
+    {
+      "file": "clear_0094.jpg",
+      "source_row": 94
+    },
+    {
+      "file": "clear_0095.jpg",
+      "source_row": 95
+    },
+    {
+      "file": "clear_0096.jpg",
+      "source_row": 96
+    },
+    {
+      "file": "clear_0097.jpg",
+      "source_row": 97
+    },
+    {
+      "file": "clear_0098.jpg",
+      "source_row": 98
+    },
+    {
+      "file": "clear_0099.jpg",
+      "source_row": 99
+    }
+  ]
+}

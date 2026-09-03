@@ -1,0 +1,3 @@
+# Vendored from https://github.com/rmsandu/FFHQ-detect-face-wrinkles (MIT license, code).
+# The pretrained weights (weights/hf_models/wrinkle_unet/*.safetensors) are
+# CC BY-NC-SA 4.0 (from the FFHQ-Wrinkle dataset) - academic / non-commercial use only.

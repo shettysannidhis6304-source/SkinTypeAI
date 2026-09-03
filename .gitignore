@@ -1,0 +1,51 @@
+.venv/
+.venv-new/
+venv/
+env/
+
+__pycache__/
+*.pyc
+
+.env
+
+.vscode/
+.idea/
+
+# ---- Local runtime data & private content (never committed) ----
+# The SQLite database holds real user accounts (bcrypt hashes) + scan history.
+# Each machine creates its own with database/init_db.py.
+database/skintype.db
+database/*.db-journal
+database/*.db-wal
+# User-uploaded face photos.
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+.ipynb_checkpoints/
+
+*.log
+
+# ---- ML datasets & trained binary weights (kept out of Git per project policy) ----
+# Raw/external datasets (ACNE04 etc.) and the YOLO-format working copy.
+datasets/external/
+datasets/skin_detect/
+# Prepared crops + pseudo/heuristic labels for the custom model (regenerate with
+# scripts/prepare_dataset.py). label_provenance.json is small text -> keep it.
+datasets/processed/crops/
+datasets/processed/clear_faces/
+datasets/processed/*_labels.csv
+# Trained / downloaded model weights (large binaries) and their local sidecars.
+weights/*.pt
+weights/*.pt.version
+weights/*.test_metrics.json
+weights/*.safetensors
+weights/*.onnx
+weights/hf_models/
+weights/skin_analysis/
+# Keep the small provenance/metadata sidecars tracked (they are text):
+!weights/**/*.metadata.json
+# Ultralytics training run outputs.
+runs/
+yolo11n.pt
+# Packaged YOLO dataset for Colab upload (large binary).
+skin_detect.zip
