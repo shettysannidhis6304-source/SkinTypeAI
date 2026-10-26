@@ -82,6 +82,11 @@ accelerate>=0.26,<1.1         # required by transformers for `low_cpu_mem_usage=
 # ---------------- Training Utilities ----------------
 tensorboard==2.17.0
 tqdm==4.66.4
+
+# ---------------- Edge inference / benchmarking ----------------
+openvino==2024.6.0             # wrinkle U-Net fp16 IR for CPU (scripts/convert_wrinkle_openvino.py
+                                 # + scripts/benchmark_system.py). CPU/iGPU inference on the i5/Iris Xe
+                                 # dev laptop; ~2x smaller model, ~2x faster than the fp32 PyTorch path.
 matplotlib==3.9.2               # confusion matrix / ROC plotting (3.9.1 has no Windows wheel, only 3.9.1.post1+)
 
 # ---------------- Explainability (added when Grad-CAM step is built) ----------------
@@ -89,6 +94,10 @@ grad-cam==1.5.0
 
 # ---------------- PDF Report Generation (added in reporting step) ----------------
 reportlab==4.2.2
+
+# ---------------- Phone-camera bridge ----------------
+segno==1.6.1                    # pure-Python QR code (no deps) for the "Use Phone Camera"
+                                 # QR session in backend/app/routers/mobile.py
 
 # ---------------- Environment / Config ----------------
 python-dotenv==1.0.1

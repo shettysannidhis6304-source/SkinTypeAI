@@ -6,11 +6,21 @@ The project's OWN multi-task skin classifier -- the model we train ourselves
 Hugging Face checkpoints.
 
 Design (CPU-only, Dell Inspiron, <20 min end to end):
-  * Backbone : timm `mobilenetv3_small_100`, ImageNet-pretrained, used purely as
-               a FROZEN feature extractor (num_classes=0 -> 576-d pooled vector).
-               Every backbone parameter has requires_grad = False. This is
-               transfer learning, the standard and defensible approach: we do
-               NOT fine-tune the trunk.
+  * Backbone : timm `mobilenetv3_small_100`, ImageNet-pretrained, used as a
+               mostly-frozen feature extractor (num_classes=0 -> 1024-d pooled
+               vector after conv_head).
+                 - fine_tune_top=False : every backbone parameter is frozen
+                   (pure transfer learning).
+                 - fine_tune_top=True  (DEFAULT): stages 0..N-2 stay frozen;
+                   ONLY the final inverted-residual stage (blocks[-1], ~56k
+                   params) -- optionally conv_head too -- is unfrozen so a small,
+                   bounded slice of the trunk adapts to skin imagery. BatchNorm
+                   running stats stay frozen either way (train() keeps the trunk
+                   in eval mode).
+               NOTE: the offline feature cache in training/train_custom.py runs
+               the trunk once and trains only the heads, so it does NOT exercise
+               fine_tune_top; end-to-end training (a separate step) is required
+               for the unfrozen block to actually move.
   * Heads    : three small, independent classifier heads on the pooled vector:
                  head_skin_type    -> 4  (dry, normal, oily, combination)
                  head_acne         -> 4  (mild, moderate, severe, very_severe)
@@ -40,11 +50,14 @@ Checkpoint format (`weights/custom_skin_model.pt`), saved by train_custom.py::
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
 
 # Canonical class orders -- the single source of truth for both training and
 # the backend adapter. Do not reorder without retraining.
@@ -76,15 +89,20 @@ class CustomSkinModel(nn.Module):
         head_classes: dict[str, list[str]] | None = None,
         pretrained_backbone: bool = True,
         p_drop: float = 0.2,
+        fine_tune_top: bool = True,
+        fine_tune_conv_head: bool = False,
     ) -> None:
         super().__init__()
         import timm
 
         self.backbone_name = backbone_name
         self.head_classes = head_classes or {k: list(v) for k, v in HEAD_CLASSES.items()}
+        self.fine_tune_top = bool(fine_tune_top)
+        self.fine_tune_conv_head = bool(fine_tune_conv_head)
 
         self.backbone = timm.create_model(backbone_name, pretrained=pretrained_backbone, num_classes=0)
-        self.freeze_backbone()
+        self._unfrozen_trunk_names: list[str] = []
+        self._configure_trunk_trainability()
         # timm reports `num_features` (e.g. 576 for mobilenetv3_small) but some
         # backbones keep a conv-head that expands the pooled vector (mobilenetv3
         # actually emits 1024). Probe once so the heads are sized correctly.
@@ -97,21 +115,63 @@ class CustomSkinModel(nn.Module):
 
     # ------------------------------------------------------------------ backbone
     def freeze_backbone(self) -> None:
+        """Freeze EVERY backbone parameter (pure transfer-learning mode)."""
         for p in self.backbone.parameters():
             p.requires_grad = False
         self.backbone.eval()
+        self._unfrozen_trunk_names = []
 
-    def train(self, mode: bool = True):  # keep the frozen trunk in eval mode always
+    def _configure_trunk_trainability(self) -> None:
+        """Freeze the whole backbone, then -- when fine_tune_top -- re-enable grad
+        on just the final inverted-residual stage (blocks[-1]), the post-block
+        norm/activation, and optionally conv_head. Earlier stages stay frozen.
+        BatchNorm running stats stay frozen regardless (see train())."""
+        self.freeze_backbone()
+        if not self.fine_tune_top:
+            return
+
+        prefixes: list[str] = []
+        blocks = getattr(self.backbone, "blocks", None)
+        if blocks is not None and len(blocks) > 0:
+            prefixes.append(f"blocks.{len(blocks) - 1}")
+        for opt_name in ("norm_head", "bn2", "act2"):
+            if hasattr(self.backbone, opt_name):
+                prefixes.append(opt_name)
+        if self.fine_tune_conv_head and hasattr(self.backbone, "conv_head"):
+            prefixes.append("conv_head")
+
+        unfrozen: list[str] = []
+        for name, p in self.backbone.named_parameters():
+            if any(name == pre or name.startswith(pre + ".") for pre in prefixes):
+                p.requires_grad = True
+                unfrozen.append(name)
+        self._unfrozen_trunk_names = unfrozen
+
+        n_trunk = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
+        logger.info("fine_tune_top: unfroze %d trunk tensors (%s) -> %s trainable trunk params",
+                    len(unfrozen), ", ".join(prefixes) or "none", f"{n_trunk:,}")
+
+    @property
+    def _trunk_has_grad(self) -> bool:
+        return any(p.requires_grad for p in self.backbone.parameters())
+
+    def train(self, mode: bool = True):
+        """Keep the trunk (including any fine-tuned top block) in eval mode so
+        BatchNorm running stats never move -- only the unfrozen *weights* adapt.
+        Standard practice when fine-tuning few params on a small dataset."""
         super().train(mode)
         self.backbone.eval()
         return self
 
     # ------------------------------------------------------------------ forward
-    @torch.no_grad()
     def extract_features(self, images: torch.Tensor) -> torch.Tensor:
-        """Pooled backbone features (B, feature_dim). No grad -- trunk is frozen.
-        Used both in forward() and by the offline feature cache in train_custom.py."""
-        return self.backbone(images)
+        """Pooled backbone features (B, feature_dim). Builds an autograd graph
+        ONLY while training with an unfrozen top block (fine_tune_top); otherwise
+        (inference, or fully-frozen training via the feature cache) it is a
+        no-grad pass, exactly as before."""
+        want_grad = self.training and self._trunk_has_grad and torch.is_grad_enabled()
+        with (torch.enable_grad() if want_grad else torch.no_grad()):
+            return self.backbone(images)
 
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         feats = self.extract_features(images)
@@ -130,6 +190,9 @@ class CustomSkinModel(nn.Module):
             "std": STD,
             "heads": {k: list(v) for k, v in self.head_classes.items()},
             "feature_dim": self.feature_dim,
+            "fine_tune_top": self.fine_tune_top,
+            "fine_tune_conv_head": self.fine_tune_conv_head,
+            "unfrozen_trunk_tensors": list(self._unfrozen_trunk_names),
         }
 
     def save(self, path: str | Path, *, metrics: dict | None = None, notes: str = "") -> None:
@@ -165,6 +228,9 @@ def load_custom_model(path: str | Path, device: str = "cpu") -> tuple[CustomSkin
         backbone_name=cfg.get("backbone", DEFAULT_BACKBONE),
         head_classes=cfg.get("heads", HEAD_CLASSES),
         pretrained_backbone=False,  # weights come entirely from the checkpoint
+        # default False when the key is absent -> old checkpoints load byte-identically
+        fine_tune_top=cfg.get("fine_tune_top", False),
+        fine_tune_conv_head=cfg.get("fine_tune_conv_head", False),
     )
     model.load_state_dict(ckpt["state_dict"])
     model.to(device).eval()
@@ -172,7 +238,10 @@ def load_custom_model(path: str | Path, device: str = "cpu") -> tuple[CustomSkin
 
 
 def trainable_parameters(model: CustomSkinModel):
-    """Just the head parameters -- what the optimiser should see."""
+    """Parameters the optimiser should update: the classifier heads PLUS any
+    trunk parameters left unfrozen by ``fine_tune_top`` (none when the trunk is
+    fully frozen). ``model.parameters()`` yields heads + backbone, so a single
+    ``requires_grad`` filter covers both."""
     return (p for p in model.parameters() if p.requires_grad)
 
 

@@ -87,7 +87,9 @@ class SkinAnalysis(BaseModel):
     image_size: list[int] = Field(min_length=2, max_length=2)
     conditions: dict[str, ConditionEntry]
     skin_health_index: SkinHealthIndex | None = None
+    xai_insights: dict[str, Any] | None = None   # explainable-AI layer (xai_explainer)
     model_versions: dict[str, str] = Field(default_factory=dict)
+    quality: dict[str, Any] | None = None        # advisory 1-10 rating (assess_image_quality)
 
     model_config = ConfigDict(protected_namespaces=())
 

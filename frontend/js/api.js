@@ -91,21 +91,46 @@ const API = {
     fd.append('file', file);
     return API._request('/upload', { method: 'POST', body: fd, isForm: true });
   },
-  predict: (imageId, context) =>
-    API._request(`/predict/${imageId}`, { method: 'POST', body: context || null }),
+  // predict(): when forceProceed is false and the photo rates <= 6/10 the backend
+  // returns { status:'advisory', quality, temp_image_id } instead of running.
+  predict: (imageId, context, forceProceed = false) =>
+    API._request(`/predict/${imageId}?force_proceed=${forceProceed ? 'true' : 'false'}`,
+      { method: 'POST', body: context || null }),
 
   history: () => API._request('/history'),
 
   async scan(file, context) {
     const { image_id } = await API.upload(file);
-    return API.predict(image_id, context);
+    const res = await API.predict(image_id, context, false);
+    return { ...res, _imageId: image_id };
   },
+
+  // ---- "Use Phone Camera" — QR capture session ----
+  createQrSession: (ip) =>
+    API._request(`/api/session/create-qr-session${ip ? '?ip=' + encodeURIComponent(ip) : ''}`, { timeout: 12000 }),
+  sessionStatus: (sessionId) =>
+    API._request(`/api/session/${encodeURIComponent(sessionId)}/status`, { timeout: 8000 }),
 
   // absolute URL for an <img src> (needs the auth token → we fetch as blob)
   async imageBlobUrl(pathOrId) {
     const path = typeof pathOrId === 'number' ? `/images/${pathOrId}` : pathOrId;
     const res = await fetch(`${API.BASE}${path}`, { headers: { Authorization: `Bearer ${API.getToken()}` } });
     if (!res.ok) throw new Error('image fetch failed');
+    return URL.createObjectURL(await res.blob());
+  },
+
+  // XAI overlay PNG (Grad-CAM heatmap or MediaPipe measurement zones) as a blob URL
+  async overlayBlobUrl(imageId, mode, head) {
+    const q = mode === 'gradcam'
+      ? `?mode=gradcam&head=${encodeURIComponent(head || 'acne')}`
+      : '?mode=zones';
+    const res = await fetch(`${API.BASE}/api/images/${imageId}/overlay${q}`,
+      { headers: { Authorization: `Bearer ${API.getToken()}` } });
+    if (!res.ok) {
+      let msg = `Overlay failed (${res.status})`;
+      try { const j = await res.json(); if (j && typeof j.detail === 'string') msg = j.detail; } catch (_) {}
+      const e = new Error(msg); e.status = res.status; throw e;
+    }
     return URL.createObjectURL(await res.blob());
   },
 

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2f5d50">
+  <title>SkinIntelli · Phone Capture</title>
+  <style>
+    :root { --sage:#2f5d50; --sage-d:#244a40; --bg:#f2f0e9; --ink:#22302b; --muted:#6b7a72; --line:#dcded4; }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html,body { margin:0; padding:0; }
+    body {
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+      background:var(--bg); color:var(--ink); min-height:100vh;
+      display:flex; flex-direction:column; align-items:center; padding:24px 18px calc(24px + env(safe-area-inset-bottom));
+    }
+    .brand { display:flex; align-items:center; gap:9px; font-weight:800; font-size:1.15rem; margin:6px 0 22px; }
+    .brand .dot { width:26px; height:26px; border-radius:8px; background:var(--sage); color:#fff;
+      display:grid; place-items:center; font-size:.8rem; }
+    .card {
+      width:100%; max-width:440px; background:#fff; border:1px solid var(--line); border-radius:18px;
+      padding:22px; box-shadow:0 8px 30px rgba(40,60,50,.08); text-align:center;
+    }
+    h1 { font-size:1.25rem; margin:0 0 6px; }
+    p.sub { color:var(--muted); font-size:.92rem; margin:0 0 20px; line-height:1.5; }
+    .preview { width:100%; aspect-ratio:3/4; border-radius:14px; object-fit:cover; background:#eceee6;
+      border:1px solid var(--line); margin-bottom:16px; display:none; }
+    button.big {
+      width:100%; border:0; border-radius:14px; padding:17px 18px; font-size:1.05rem; font-weight:700;
+      background:var(--sage); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px;
+    }
+    button.big:active { background:var(--sage-d); }
+    button.ghost { background:#fff; color:var(--sage); border:1.5px solid var(--sage); margin-top:10px; }
+    .status { margin-top:16px; font-size:.95rem; min-height:22px; }
+    .status.ok { color:var(--sage); font-weight:700; }
+    .status.err { color:#b3462f; font-weight:600; }
+    .spinner {
+      width:18px; height:18px; border:3px solid rgba(255,255,255,.4); border-top-color:#fff;
+      border-radius:50%; animation:spin .8s linear infinite; display:inline-block; vertical-align:middle;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .tips { margin-top:22px; font-size:.82rem; color:var(--muted); line-height:1.6; text-align:left; }
+    .foot { margin-top:26px; font-size:.72rem; color:var(--muted); text-align:center; }
+  </style>
+</head>
+<body>
+  <div class="brand"><span class="dot">S</span> SkinIntelli</div>
+  <div class="card">
+    <h1>Take a High-Res Selfie</h1>
+    <p class="sub">This photo goes straight to your laptop for skin analysis. Use good, even lighting and hold steady.</p>
+
+    <img id="preview" class="preview" alt="Your selfie">
+
+    <button class="big" id="shoot"><span id="shoot-label">📷 Take High-Res Selfie</span></button>
+    <button class="big ghost" id="retake" style="display:none">Retake</button>
+
+    <input type="file" id="file" accept="image/*" capture="user" style="display:none">
+
+    <div class="status" id="status"></div>
+
+    <div class="tips">
+      • Face the light (a window works well) — avoid backlight.<br>
+      • Fill the frame with your face, camera at eye level.<br>
+      • Keep the phone on the same Wi-Fi as the laptop.
+    </div>
+  </div>
+  <div class="foot">Academic project — not a medical device. The image is used only for this analysis.</div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var session = params.get('session');
+      var fileInput = document.getElementById('file');
+      var shoot = document.getElementById('shoot');
+      var shootLabel = document.getElementById('shoot-label');
+      var retake = document.getElementById('retake');
+      var preview = document.getElementById('preview');
+      var statusEl = document.getElementById('status');
+      var uploaded = false;
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'status' + (kind ? ' ' + kind : '');
+      }
+
+      if (!session) {
+        shoot.disabled = true;
+        setStatus('Missing session code. Re-scan the QR code shown on your laptop.', 'err');
+        return;
+      }
+
+      shoot.addEventListener('click', function () { if (!uploaded) fileInput.click(); });
+      retake.addEventListener('click', function () {
+        uploaded = false;
+        retake.style.display = 'none';
+        preview.style.display = 'none';
+        shoot.disabled = false;
+        shootLabel.textContent = '📷 Take High-Res Selfie';
+        setStatus('');
+        fileInput.value = '';
+      });
+
+      fileInput.addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        var url = URL.createObjectURL(f);
+        preview.src = url;
+        preview.style.display = 'block';
+        upload(f);
+      });
+
+      function upload(file) {
+        shoot.disabled = true;
+        shootLabel.innerHTML = '<span class="spinner"></span> Sending to laptop…';
+        setStatus('Uploading your photo…');
+
+        var fd = new FormData();
+        fd.append('file', file, file.name || 'selfie.jpg');
+
+        var ctrl = new AbortController();
+        var to = setTimeout(function () { ctrl.abort(); }, 30000);
+
+        fetch('/api/session/' + encodeURIComponent(session) + '/mobile-upload', {
+          method: 'POST', body: fd, signal: ctrl.signal
+        }).then(function (res) {
+          clearTimeout(to);
+          if (!res.ok) {
+            return res.json().catch(function () { return {}; }).then(function (j) {
+              var msg = j.detail;
+              if (res.status === 404) msg = 'This link has expired. Go back to the laptop and generate a new QR code.';
+              else if (res.status === 413) msg = 'That photo is too large. Try again.';
+              else if (res.status === 415) msg = 'That file type is not supported — use your camera to take a JPEG photo.';
+              var e = new Error(msg || ('Upload failed (' + res.status + ')'));
+              e._handled = true;
+              throw e;
+            });
+          }
+          return res.json();
+        }).then(function () {
+          uploaded = true;
+          shootLabel.textContent = '✓ Photo sent';
+          retake.style.display = 'block';
+          setStatus('Photo sent! Your analysis is starting on the laptop — you can put your phone down.', 'ok');
+        }).catch(function (err) {
+          clearTimeout(to);
+          shoot.disabled = false;
+          shootLabel.textContent = '📷 Try again';
+          var msg = err && err._handled ? err.message
+            : (err && err.name === 'AbortError')
+              ? 'The upload timed out. Make sure your phone is on the same Wi-Fi as the laptop, then try again.'
+              : 'Could not reach the laptop. Your phone must be on the same Wi-Fi network — check that, then try again.';
+          setStatus(msg, 'err');
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

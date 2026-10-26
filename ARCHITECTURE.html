@@ -1,0 +1,704 @@
+<title>SkinType AI Architecture</title>
+<meta name="description" content="System architecture and data-flow diagrams for the SkinType AI / SkinIntelli facial skin-analysis pipeline.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground:#e7eaed;
+    --surface:#ffffff;
+    --surface-2:#f2f5f6;
+    --lane:#eef1f3;
+    --lane-inner:#e4e8eb;
+    --ink:#1a2024;
+    --ink-soft:#54626c;
+    --line:#c2ccd2;
+    --line-strong:#89969e;
+    --trained:#1f7a5c;    --fill-trained:#e4f1ea;
+    --pretrained:#2f5fa8;  --fill-pretrained:#e6edf7;
+    --cv:#b0640d;          --fill-cv:#f6ecdd;
+    --na:#6f7883;          --fill-na:#eceef1;
+    --rule:#6b4ba8;        --fill-rule:#eee8f7;
+    --danger:#a23a2b;
+    --accent:#1f7a5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#14171a;
+      --surface:#1d2125;
+      --surface-2:#23282d;
+      --lane:#1b1f23;
+      --lane-inner:#242a30;
+      --ink:#e6e9ec;
+      --ink-soft:#9aa6ae;
+      --line:#39424a;
+      --line-strong:#5c6870;
+      --trained:#5fc09b;    --fill-trained:#153029;
+      --pretrained:#7aa8e0;  --fill-pretrained:#172636;
+      --cv:#e0964c;          --fill-cv:#33260f;
+      --na:#8b949d;          --fill-na:#262b30;
+      --rule:#b89ce9;        --fill-rule:#241a37;
+      --danger:#e0806f;
+      --accent:#5fc09b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#14171a;
+    --surface:#1d2125;
+    --surface-2:#23282d;
+    --lane:#1b1f23;
+    --lane-inner:#242a30;
+    --ink:#e6e9ec;
+    --ink-soft:#9aa6ae;
+    --line:#39424a;
+    --line-strong:#5c6870;
+    --trained:#5fc09b;    --fill-trained:#153029;
+    --pretrained:#7aa8e0;  --fill-pretrained:#172636;
+    --cv:#e0964c;          --fill-cv:#33260f;
+    --na:#8b949d;          --fill-na:#262b30;
+    --rule:#b89ce9;        --fill-rule:#241a37;
+    --danger:#e0806f;
+    --accent:#5fc09b;
+  }
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0;
+    background:var(--ground);
+    color:var(--ink);
+    font-family:"Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+    line-height:1.6;
+  }
+  .wrap {
+    max-width:1120px;
+    margin:0 auto;
+    padding:56px 24px 96px;
+  }
+
+  header.page { margin-bottom:48px; }
+  .kicker {
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:12px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 14px;
+  }
+  h1 {
+    font-family:"Spectral", Georgia, serif;
+    font-weight:600;
+    font-size:clamp(2rem, 5vw, 3rem);
+    line-height:1.1;
+    text-wrap:balance;
+    margin:0 0 18px;
+  }
+  header.page p {
+    max-width:64ch;
+    font-size:1.05rem;
+    color:var(--ink-soft);
+    margin:0;
+  }
+  header.page p + p { margin-top:12px; }
+
+  .legend {
+    margin:34px 0 0;
+    padding:18px 20px;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:10px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px 22px;
+  }
+  .legend h2 {
+    width:100%;
+    margin:0 0 4px;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    font-weight:500;
+  }
+  .lg { display:flex; align-items:center; gap:9px; font-size:.9rem; }
+  .sw {
+    width:26px; height:16px; border-radius:4px;
+    border:1.5px solid var(--line-strong);
+    flex:none;
+  }
+  .sw.trained    { background:var(--fill-trained);    border-color:var(--trained); }
+  .sw.pretrained { background:var(--fill-pretrained); border-color:var(--pretrained); }
+  .sw.cv         { background:var(--fill-cv);         border-color:var(--cv); }
+  .sw.rule       { background:var(--fill-rule);       border-color:var(--rule); border-style:dashed; }
+
+  figure.fig {
+    margin:40px 0 0;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:12px;
+    overflow:hidden;
+  }
+  .fig-head {
+    display:flex; align-items:baseline; gap:14px;
+    padding:20px 24px 16px;
+    border-bottom:1px solid var(--line);
+    background:var(--surface-2);
+  }
+  .fig-no {
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12px;
+    letter-spacing:.1em;
+    color:var(--accent);
+    flex:none;
+  }
+  .fig-head h2 {
+    font-family:"Spectral", Georgia, serif;
+    font-weight:500;
+    font-size:1.3rem;
+    margin:0;
+  }
+  .fig-scroll { overflow-x:auto; padding:24px; }
+  .fig-scroll svg { display:block; min-width:640px; max-width:100%; height:auto; margin:0 auto; }
+  figcaption {
+    padding:0 24px 24px;
+    font-family:"Spectral", Georgia, serif;
+    font-style:italic;
+    font-size:.98rem;
+    color:var(--ink-soft);
+    max-width:78ch;
+  }
+
+  /* ---- shared SVG styling ---- */
+  .dg text { fill:var(--ink); font-family:"IBM Plex Mono", ui-monospace, monospace; }
+  .dg .box { fill:var(--surface); stroke:var(--line-strong); stroke-width:1.5; }
+  .dg .box.trained    { stroke:var(--trained);    fill:var(--fill-trained); }
+  .dg .box.pretrained { stroke:var(--pretrained); fill:var(--fill-pretrained); }
+  .dg .box.cv         { stroke:var(--cv);         fill:var(--fill-cv); }
+  .dg .box.rule       { stroke:var(--rule);       fill:var(--fill-rule); stroke-dasharray:6 4; }
+  .dg .box.na         { stroke:var(--na);         fill:var(--fill-na);   stroke-dasharray:5 4; }
+  .dg .lane      { fill:var(--lane);        stroke:var(--line); stroke-width:1; }
+  .dg .lane-in   { fill:var(--lane-inner);  stroke:var(--line); stroke-width:1; }
+  .dg .b-title { font-family:"Hanken Grotesk", sans-serif; font-weight:600; font-size:13px; fill:var(--ink); }
+  .dg .b-sub   { font-size:10.5px; fill:var(--ink-soft); }
+  .dg .b-out   { font-size:10px; fill:var(--ink-soft); }
+  .dg .lane-label {
+    font-family:"IBM Plex Mono", monospace; font-size:11px;
+    letter-spacing:.1em; fill:var(--ink-soft);
+  }
+  .dg .edge  { stroke:var(--line-strong); stroke-width:1.6; fill:none; }
+  .dg .edge.dash { stroke-dasharray:5 4; }
+  .dg .edge.thin { stroke-width:1.1; stroke:var(--trained); stroke-dasharray:3 3; }
+  .dg .edge.life { stroke:var(--line); stroke-width:1.3; stroke-dasharray:2 4; }
+  .dg .elab {
+    font-size:10.5px; fill:var(--ink-soft);
+    paint-order:stroke; stroke:var(--surface); stroke-width:3.5px; stroke-linejoin:round;
+  }
+  .dg .elab.warn { fill:var(--danger); }
+  .dg .ahead   { fill:var(--line-strong); }
+  .dg .ahead-t { fill:var(--trained); }
+  .dg .chip     { font-size:9.5px; fill:var(--ink-soft); font-family:"IBM Plex Mono", monospace; }
+  .dg .tier-dot { stroke:none; }
+
+  a { color:var(--accent); }
+  @media (max-width:640px) {
+    .wrap { padding:40px 14px 72px; }
+    .fig-scroll { padding:14px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="page">
+    <p class="kicker">System architecture</p>
+    <h1>SkinType AI — how the pipeline works</h1>
+    <p>A full-stack computer-vision system: one face photo in, a structured per-condition
+    skin analysis and a rule-based skincare plan out. A vanilla-JS single-page app talks to
+    a FastAPI backend that orchestrates a stack of vision models, persists results to SQLite,
+    and pulls live environment data from Open-Meteo.</p>
+    <p>The organising principle is provenance. Every value the API returns is traceable to a
+    named checkpoint, a documented deterministic formula, or an explicit <em>not&nbsp;available</em>
+    marker — the diagrams below colour each component by which of those it is.</p>
+
+    <div class="legend">
+      <h2>Component provenance — used across every figure</h2>
+      <span class="lg"><span class="sw trained"></span> Trained in this project</span>
+      <span class="lg"><span class="sw pretrained"></span> Third-party pretrained checkpoint</span>
+      <span class="lg"><span class="sw cv"></span> Deterministic computer vision (not ML)</span>
+      <span class="lg"><span class="sw rule"></span> Rule-based / auxiliary</span>
+    </div>
+  </header>
+
+  <!-- ============================================ FIG 01 ============================================ -->
+  <figure class="fig">
+    <div class="fig-head"><span class="fig-no">Fig. 01</span><h2>Three-tier system topology</h2></div>
+    <div class="fig-scroll">
+      <svg class="dg" viewBox="0 0 1180 720" role="img"
+           aria-label="Three tiers: a browser single-page app; a FastAPI backend with auth, scan and dashboard routers, a JWT security layer, the analysis service and the recommendation engine; and a persistence and external-data tier with SQLite, the filesystem and the Open-Meteo API.">
+        <defs>
+          <marker id="ah1" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" class="ahead"/>
+          </marker>
+        </defs>
+
+        <!-- Tier 1: browser -->
+        <rect class="lane" x="24" y="22" width="1132" height="120" rx="9"/>
+        <text class="lane-label" x="40" y="46">BROWSER — static single-page app · no build step</text>
+        <g>
+          <rect class="box" x="40"  y="64" width="356" height="60" rx="6"/>
+          <text class="b-title" x="218" y="88"  text-anchor="middle">app.js</text>
+          <text class="b-sub"   x="218" y="106" text-anchor="middle">hash router · views · canvas overlay</text>
+          <rect class="box" x="412" y="64" width="356" height="60" rx="6"/>
+          <text class="b-title" x="590" y="88"  text-anchor="middle">api.js</text>
+          <text class="b-sub"   x="590" y="106" text-anchor="middle">fetch wrapper · attaches Bearer JWT</text>
+          <rect class="box" x="784" y="64" width="356" height="60" rx="6"/>
+          <text class="b-title" x="962" y="88"  text-anchor="middle">localStorage</text>
+          <text class="b-sub"   x="962" y="106" text-anchor="middle">token · env context · plan progress</text>
+        </g>
+
+        <path class="edge" d="M590 142 L590 196" marker-end="url(#ah1)"/>
+        <text class="elab" x="602" y="174">HTTPS · JSON &amp; multipart · Authorization: Bearer &lt;JWT&gt;</text>
+
+        <!-- Tier 2: FastAPI -->
+        <rect class="lane" x="24" y="196" width="1132" height="356" rx="9"/>
+        <text class="lane-label" x="40" y="220">FASTAPI BACKEND — uvicorn · CPU · app.main (permissive CORS for local dev)</text>
+
+        <g>
+          <rect class="box" x="40"  y="234" width="356" height="60" rx="6"/>
+          <text class="b-title" x="218" y="258" text-anchor="middle">auth router</text>
+          <text class="b-sub"   x="218" y="276" text-anchor="middle">/register · /login → JWT (HS256)</text>
+          <rect class="box" x="412" y="234" width="356" height="60" rx="6"/>
+          <text class="b-title" x="590" y="258" text-anchor="middle">scan router</text>
+          <text class="b-sub"   x="590" y="276" text-anchor="middle">/upload · /predict/{id} · /history</text>
+          <rect class="box" x="784" y="234" width="356" height="60" rx="6"/>
+          <text class="b-title" x="962" y="258" text-anchor="middle">dashboard router</text>
+          <text class="b-sub"   x="962" y="276" text-anchor="middle">/me · /images/{id} · /environment/*</text>
+        </g>
+
+        <rect class="box" x="40" y="308" width="1100" height="30" rx="5"/>
+        <text class="b-sub" x="590" y="327" text-anchor="middle">app.core.security — decode JWT → get_current_user() guards every protected route</text>
+
+        <!-- analysis service block -->
+        <rect class="lane-in" x="40" y="352" width="700" height="182" rx="7"/>
+        <text class="b-title" x="60" y="376">app.services.analysis_service.run_analysis()</text>
+        <text class="b-sub"   x="60" y="393">orchestrates the ML model stack — detail in Fig. 03</text>
+        <g>
+          <rect class="box trained"    x="58"  y="404" width="150" height="46" rx="5"/>
+          <text class="chip" x="133" y="424" text-anchor="middle">custom</text>
+          <text class="chip" x="133" y="437" text-anchor="middle">multi-task .pt</text>
+          <rect class="box pretrained" x="222" y="404" width="150" height="46" rx="5"/>
+          <text class="chip" x="297" y="424" text-anchor="middle">HF ViT</text>
+          <text class="chip" x="297" y="437" text-anchor="middle">fallback</text>
+          <rect class="box pretrained" x="386" y="404" width="150" height="46" rx="5"/>
+          <text class="chip" x="461" y="424" text-anchor="middle">YOLOv8s +</text>
+          <text class="chip" x="461" y="437" text-anchor="middle">wrinkle U-Net</text>
+          <rect class="box cv"         x="550" y="404" width="172" height="46" rx="5"/>
+          <text class="chip" x="636" y="424" text-anchor="middle">CV analysis engine</text>
+          <text class="chip" x="636" y="437" text-anchor="middle">OpenCV, not ML</text>
+        </g>
+        <rect class="box" x="58" y="464" width="664" height="52" rx="5"/>
+        <text class="b-title" x="390" y="484" text-anchor="middle">_normalize() → compute_skin_health_index()</text>
+        <text class="b-sub"   x="390" y="501" text-anchor="middle">canonical per-condition entries + one deterministic 0–100 score</text>
+
+        <rect class="box rule" x="760" y="352" width="380" height="80" rx="6"/>
+        <text class="b-title" x="950" y="382" text-anchor="middle">recommendation_engine</text>
+        <text class="b-sub"   x="950" y="400" text-anchor="middle">rule-based routine + ingredients</text>
+        <text class="b-sub"   x="950" y="416" text-anchor="middle">+ ScanContext (questionnaire / weather)</text>
+
+        <rect class="box" x="760" y="452" width="380" height="64" rx="6"/>
+        <text class="b-title" x="950" y="480" text-anchor="middle">PredictionResult</text>
+        <text class="b-sub"   x="950" y="498" text-anchor="middle">returned to the browser as JSON</text>
+
+        <!-- internal edges tier 2 -->
+        <path class="edge" d="M590 294 L390 350" marker-end="url(#ah1)"/>
+        <text class="elab" x="470" y="326">run_analysis(path)</text>
+        <path class="edge" d="M722 456 L760 420" marker-end="url(#ah1)"/>
+        <path class="edge" d="M722 492 L760 486" marker-end="url(#ah1)"/>
+        <text class="elab" x="726" y="452">conditions</text>
+
+        <!-- Tier 3: data -->
+        <rect class="lane" x="24" y="580" width="1132" height="116" rx="9"/>
+        <text class="lane-label" x="40" y="604">PERSISTENCE &amp; EXTERNAL DATA</text>
+        <g>
+          <rect class="box" x="40"  y="620" width="356" height="60" rx="6"/>
+          <text class="b-title" x="218" y="644" text-anchor="middle">SQLite · SQLAlchemy</text>
+          <text class="b-sub"   x="218" y="662" text-anchor="middle">users · images · predictions (results = JSON)</text>
+          <rect class="box" x="412" y="620" width="356" height="60" rx="6"/>
+          <text class="b-title" x="590" y="644" text-anchor="middle">filesystem</text>
+          <text class="b-sub"   x="590" y="662" text-anchor="middle">backend/uploads/ · weights/ (git-ignored)</text>
+          <rect class="box na" x="784" y="620" width="356" height="60" rx="6"/>
+          <text class="b-title" x="962" y="644" text-anchor="middle">Open-Meteo API</text>
+          <text class="b-sub"   x="962" y="662" text-anchor="middle">weather · air quality · geocoding · keyless</text>
+        </g>
+
+        <path class="edge" d="M300 518 L235 618" marker-end="url(#ah1)"/>
+        <text class="elab" x="210" y="566">INSERT prediction</text>
+        <path class="edge dash" d="M560 618 Q 150 610 130 520" marker-end="url(#ah1)"/>
+        <text class="elab" x="300" y="600">analysis loads weights/ on first use — no network</text>
+        <path class="edge" d="M1090 296 L1090 618" marker-end="url(#ah1)"/>
+        <text class="elab" x="965" y="612">httpx GET · feeds recommendations only, never a model</text>
+      </svg>
+    </div>
+    <figcaption>The browser only ever sees the FastAPI surface. Every request carries a JWT that
+    <code>get_current_user()</code> resolves before a route runs. The analysis service is the only
+    component that touches model files, and Open-Meteo data is walled off from the models — it can
+    influence the written recommendation but never a prediction.</figcaption>
+  </figure>
+
+  <!-- ============================================ FIG 02 ============================================ -->
+  <figure class="fig">
+    <div class="fig-head"><span class="fig-no">Fig. 02</span><h2>A scan, request by request</h2></div>
+    <div class="fig-scroll">
+      <svg class="dg" viewBox="0 0 1180 780" role="img"
+           aria-label="Sequence of a scan across four lanes — browser, scan router, analysis service, and store. Upload returns an image id, then predict runs the model stack, builds a recommendation, persists a prediction row, and returns the full result which the browser renders.">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" class="ahead"/>
+          </marker>
+        </defs>
+
+        <!-- lane headers -->
+        <g>
+          <rect class="box" x="20"   y="20" width="270" height="40" rx="6"/>
+          <text class="b-title" x="155"  y="45" text-anchor="middle">browser</text>
+          <rect class="box" x="312"  y="20" width="270" height="40" rx="6"/>
+          <text class="b-title" x="447"  y="45" text-anchor="middle">scan router</text>
+          <rect class="box" x="604"  y="20" width="270" height="40" rx="6"/>
+          <text class="b-title" x="739"  y="45" text-anchor="middle">analysis_service</text>
+          <rect class="box" x="896"  y="20" width="264" height="40" rx="6"/>
+          <text class="b-title" x="1028" y="45" text-anchor="middle">SQLite + filesystem</text>
+        </g>
+        <!-- lifelines -->
+        <path class="edge life" d="M155 60 L155 762"/>
+        <path class="edge life" d="M447 60 L447 762"/>
+        <path class="edge life" d="M739 60 L739 762"/>
+        <path class="edge life" d="M1028 60 L1028 762"/>
+
+        <!-- 1 -->
+        <path class="edge" d="M155 96 L447 96" marker-end="url(#ah2)"/>
+        <text class="elab" x="160" y="88">1 · POST /upload — photo (multipart), Bearer JWT</text>
+        <!-- 2 -->
+        <path class="edge" d="M447 138 L1028 138" marker-end="url(#ah2)"/>
+        <text class="elab" x="452" y="130">2 · write file → uploads/ ; INSERT image row</text>
+        <!-- 3 -->
+        <path class="edge dash" d="M1028 176 L447 176" marker-end="url(#ah2)"/>
+        <text class="elab" x="600" y="168">3 · image_id</text>
+        <!-- 4 -->
+        <path class="edge dash" d="M447 214 L155 214" marker-end="url(#ah2)"/>
+        <text class="elab" x="200" y="206">4 · 201 Created { image_id }</text>
+        <!-- 5 -->
+        <path class="edge" d="M155 262 L447 262" marker-end="url(#ah2)"/>
+        <text class="elab" x="160" y="254">5 · POST /predict/{image_id} + optional ScanContext</text>
+        <!-- 6 self -->
+        <path class="edge" d="M447 292 h44 v20 h-44" marker-end="url(#ah2)"/>
+        <text class="elab" x="500" y="300">6 · verify model files present → 503 if missing</text>
+        <!-- 7 -->
+        <path class="edge" d="M447 342 L739 342" marker-end="url(#ah2)"/>
+        <text class="elab" x="452" y="334">7 · run_analysis(path)</text>
+        <!-- 8 self box -->
+        <rect class="box" x="604" y="360" width="270" height="118" rx="6"/>
+        <text class="b-sub" x="614" y="381">8 · face_region()  → face crop + skin mask</text>
+        <text class="b-sub" x="614" y="399">    custom model  (or HF ViT fallback)</text>
+        <text class="b-sub" x="614" y="417">    YOLO acne · wrinkle U-Net</text>
+        <text class="b-sub" x="614" y="435">    CV analysis engine</text>
+        <text class="b-sub" x="614" y="453">    _normalize → skin_health_index</text>
+        <text class="b-sub" x="614" y="471">    → results dict</text>
+        <!-- 9 -->
+        <path class="edge dash" d="M739 500 L447 500" marker-end="url(#ah2)"/>
+        <text class="elab" x="470" y="492">9 · results { conditions, skin_health_index }</text>
+        <!-- 10 self -->
+        <path class="edge" d="M447 528 h44 v20 h-44" marker-end="url(#ah2)"/>
+        <text class="elab" x="500" y="536">10 · build_recommendation(results, context)</text>
+        <!-- 11 -->
+        <path class="edge" d="M447 578 L1028 578" marker-end="url(#ah2)"/>
+        <text class="elab" x="452" y="570">11 · INSERT prediction (results + context as JSON)</text>
+        <!-- 12 -->
+        <path class="edge dash" d="M447 620 L155 620" marker-end="url(#ah2)"/>
+        <text class="elab" x="175" y="612">12 · 200 OK — PredictionResult</text>
+        <!-- 13 self -->
+        <rect class="box" x="20" y="640" width="270" height="72" rx="6"/>
+        <text class="b-sub" x="30" y="663">13 · render SHI gauge · condition</text>
+        <text class="b-sub" x="30" y="681">     cards · draw acne boxes on a</text>
+        <text class="b-sub" x="30" y="699">     &lt;canvas&gt; overlay</text>
+      </svg>
+    </div>
+    <figcaption>Upload and predict are two separate calls: the first is a cheap write that hands
+    back an <code>image_id</code>; the second does all the model work. A scan can take ~30&nbsp;s cold on
+    CPU, so the client shows a progress overlay and uses a long request timeout.</figcaption>
+  </figure>
+
+  <!-- ============================================ FIG 03 ============================================ -->
+  <figure class="fig">
+    <div class="fig-head"><span class="fig-no">Fig. 03</span><h2>Inside <code>run_analysis()</code> — the model stack</h2></div>
+    <div class="fig-scroll">
+      <svg class="dg" viewBox="0 0 1200 660" role="img"
+           aria-label="The photo is cropped to a face and skin mask, then fanned out to four model paths: the custom multi-task checkpoint (with an HF ViT fallback), the YOLOv8s acne detector, the wrinkle U-Net, and the deterministic CV analysis engine. Outputs are normalised, scored into a skin health index, turned into a recommendation, and returned.">
+        <defs>
+          <marker id="ah3" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" class="ahead"/>
+          </marker>
+          <marker id="ah3t" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" class="ahead-t"/>
+          </marker>
+        </defs>
+
+        <rect class="box" x="20" y="292" width="132" height="70" rx="6"/>
+        <text class="b-title" x="86" y="322" text-anchor="middle">uploaded</text>
+        <text class="b-title" x="86" y="339" text-anchor="middle">photo</text>
+        <text class="b-sub"   x="86" y="354" text-anchor="middle">JPEG/PNG/WebP</text>
+
+        <rect class="box" x="188" y="292" width="164" height="70" rx="6"/>
+        <text class="b-title" x="270" y="318" text-anchor="middle">face_region()</text>
+        <text class="b-sub"   x="270" y="335" text-anchor="middle">OpenCV imread +</text>
+        <text class="b-sub"   x="270" y="349" text-anchor="middle">MediaPipe detect/mesh</text>
+
+        <path class="edge" d="M152 327 L186 327" marker-end="url(#ah3)"/>
+        <path class="edge" d="M352 327 L392 327" marker-end="url(#ah3)"/>
+        <text class="elab" x="356" y="308">face crop + skin mask</text>
+
+        <!-- model column -->
+        <rect class="box trained" x="392" y="34" width="272" height="92" rx="6"/>
+        <text class="b-title" x="528" y="56"  text-anchor="middle">custom_skin_model.pt</text>
+        <text class="b-sub"   x="528" y="73"  text-anchor="middle">MobileNetV3-S frozen trunk + 3 heads</text>
+        <text class="b-out"   x="528" y="93"  text-anchor="middle">skin type · dryness · oiliness</text>
+        <text class="b-out"   x="528" y="107" text-anchor="middle">acne severity · pigmentation</text>
+        <text class="b-out"   x="528" y="121" text-anchor="middle">PRIMARY path</text>
+
+        <rect class="box pretrained" x="392" y="134" width="272" height="44" rx="6"/>
+        <text class="b-sub" x="528" y="154" text-anchor="middle">↳ HF ViT fallback — dima806 · skintelligent</text>
+        <text class="b-sub" x="528" y="168" text-anchor="middle">used only if the .pt is missing / fails</text>
+
+        <rect class="box pretrained" x="392" y="200" width="272" height="66" rx="6"/>
+        <text class="b-title" x="528" y="224" text-anchor="middle">acne_detector — YOLOv8s</text>
+        <text class="b-sub"   x="528" y="241" text-anchor="middle">glowlytics · lesion boxes + count</text>
+        <text class="b-out"   x="528" y="257" text-anchor="middle">always runs, both paths</text>
+
+        <rect class="box pretrained" x="392" y="288" width="272" height="62" rx="6"/>
+        <text class="b-title" x="528" y="311" text-anchor="middle">wrinkle U-Net</text>
+        <text class="b-sub"   x="528" y="328" text-anchor="middle">FFHQ-Wrinkle · ResNet50 encoder</text>
+        <text class="b-out"   x="528" y="343" text-anchor="middle">wrinkle-area fraction · CC BY-NC-SA</text>
+
+        <rect class="box cv" x="392" y="372" width="272" height="88" rx="6"/>
+        <text class="b-title" x="528" y="396" text-anchor="middle">CV analysis engine</text>
+        <text class="b-sub"   x="528" y="413" text-anchor="middle">heuristics.py · OpenCV colour/texture</text>
+        <text class="b-out"   x="528" y="431" text-anchor="middle">redness · enlarged pores</text>
+        <text class="b-out"   x="528" y="445" text-anchor="middle">blackheads · dark spots</text>
+
+        <!-- fan edges -->
+        <path class="edge" d="M392 320 C 430 300 430 90  392 80"  marker-end="url(#ah3)"/>
+        <path class="edge" d="M392 322 C 430 290 430 235 392 233" marker-end="url(#ah3)"/>
+        <path class="edge" d="M392 327 C 430 322 430 322 392 319" marker-end="url(#ah3)"/>
+        <path class="edge" d="M392 334 C 430 380 430 416 392 416" marker-end="url(#ah3)"/>
+
+        <!-- normalise -->
+        <rect class="box" x="716" y="150" width="176" height="196" rx="6"/>
+        <text class="b-title" x="804" y="234" text-anchor="middle">_normalize()</text>
+        <text class="b-sub"   x="804" y="256" text-anchor="middle">canonical 8-key</text>
+        <text class="b-sub"   x="804" y="270" text-anchor="middle">ConditionEntry</text>
+        <text class="b-sub"   x="804" y="284" text-anchor="middle">× 10 conditions</text>
+
+        <path class="edge" d="M664 80  C 695 150 700 200 714 220" marker-end="url(#ah3)"/>
+        <path class="edge" d="M664 233 C 695 233 695 233 714 236" marker-end="url(#ah3)"/>
+        <path class="edge" d="M664 319 C 695 300 700 280 714 262" marker-end="url(#ah3)"/>
+        <path class="edge" d="M664 416 C 695 360 700 320 714 300" marker-end="url(#ah3)"/>
+
+        <!-- cross feeds -->
+        <path class="edge thin" d="M384 118 C 350 200 350 380 384 396" marker-end="url(#ah3t)"/>
+        <text class="elab" x="300" y="250">oiliness → pores</text>
+        <path class="edge thin" d="M378 126 C 320 210 320 400 384 404" marker-end="url(#ah3t)"/>
+        <text class="elab" x="292" y="360">pigmentation → dark spots</text>
+
+        <!-- output column -->
+        <rect class="box" x="944" y="120" width="236" height="76" rx="6"/>
+        <text class="b-title" x="1062" y="150" text-anchor="middle">skin_health_index</text>
+        <text class="b-sub"   x="1062" y="168" text-anchor="middle">deterministic 0–100</text>
+        <text class="b-sub"   x="1062" y="183" text-anchor="middle">acne·wrinkles·dryness·redness·pores</text>
+
+        <rect class="box rule" x="944" y="238" width="236" height="82" rx="6"/>
+        <text class="b-title" x="1062" y="266" text-anchor="middle">build_recommendation()</text>
+        <text class="b-sub"   x="1062" y="284" text-anchor="middle">rule-based · + ScanContext</text>
+        <text class="b-sub"   x="1062" y="299" text-anchor="middle">(questionnaire / weather)</text>
+
+        <rect class="box" x="944" y="362" width="236" height="74" rx="6"/>
+        <text class="b-title" x="1062" y="391" text-anchor="middle">PredictionResult</text>
+        <text class="b-sub"   x="1062" y="409" text-anchor="middle">persist to SQLite +</text>
+        <text class="b-sub"   x="1062" y="423" text-anchor="middle">return JSON to browser</text>
+
+        <path class="edge" d="M892 210 L942 175" marker-end="url(#ah3)"/>
+        <path class="edge" d="M892 270 L942 275" marker-end="url(#ah3)"/>
+        <path class="edge" d="M1062 196 L1062 236" marker-end="url(#ah3)"/>
+        <text class="elab" x="1070" y="222">conditions</text>
+        <path class="edge" d="M1062 320 L1062 360" marker-end="url(#ah3)"/>
+      </svg>
+    </div>
+    <figcaption>Each model is a lazily-loaded singleton and each call is isolated in a
+    <code>try/except</code>: if one model fails the endpoint still returns the rest, with that
+    condition marked <code>error</code>. The custom checkpoint and the HF ViTs are mutually
+    exclusive; the YOLO detector, U-Net and CV engine run regardless.</figcaption>
+  </figure>
+
+  <!-- ============================================ FIG 04 ============================================ -->
+  <figure class="fig">
+    <div class="fig-head"><span class="fig-no">Fig. 04</span><h2>Which engine produces which condition</h2></div>
+    <div class="fig-scroll">
+      <svg class="dg" viewBox="0 0 1040 610" role="img"
+           aria-label="Bipartite map. The custom multi-task model feeds acne severity, skin type, dryness, oiliness and pigmentation. The HF ViT fallback feeds skin type, dryness, oiliness and acne only. YOLOv8s feeds acne. The wrinkle U-Net feeds wrinkles. The CV analysis engine feeds redness, enlarged pores, blackheads and dark spots.">
+        <defs>
+          <marker id="ah4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" class="ahead"/>
+          </marker>
+        </defs>
+
+        <!-- engines -->
+        <rect class="box trained"    x="30" y="44"  width="250" height="54" rx="6"/>
+        <text class="b-title" x="155" y="66"  text-anchor="middle">custom multi-task model</text>
+        <text class="b-sub"   x="155" y="83"  text-anchor="middle">3 heads · trained here</text>
+
+        <rect class="box pretrained" x="30" y="150" width="250" height="54" rx="6"/>
+        <text class="b-title" x="155" y="172" text-anchor="middle">HF ViT — fallback only</text>
+        <text class="b-sub"   x="155" y="189" text-anchor="middle">dima806 · skintelligent</text>
+
+        <rect class="box pretrained" x="30" y="256" width="250" height="54" rx="6"/>
+        <text class="b-title" x="155" y="278" text-anchor="middle">YOLOv8s acne detector</text>
+        <text class="b-sub"   x="155" y="295" text-anchor="middle">lesion localisation</text>
+
+        <rect class="box pretrained" x="30" y="342" width="250" height="54" rx="6"/>
+        <text class="b-title" x="155" y="364" text-anchor="middle">wrinkle U-Net</text>
+        <text class="b-sub"   x="155" y="381" text-anchor="middle">segmentation</text>
+
+        <rect class="box cv"         x="30" y="470" width="250" height="54" rx="6"/>
+        <text class="b-title" x="155" y="492" text-anchor="middle">CV analysis engine</text>
+        <text class="b-sub"   x="155" y="509" text-anchor="middle">OpenCV — not ML</text>
+
+        <!-- conditions -->
+        <g>
+          <rect class="box trained"    x="760" y="34"  width="250" height="34" rx="5"/><text class="b-title" x="885" y="56"  text-anchor="middle">acne (+ severity)</text>
+          <rect class="box trained"    x="760" y="84"  width="250" height="34" rx="5"/><text class="b-title" x="885" y="106" text-anchor="middle">skin type</text>
+          <rect class="box trained"    x="760" y="134" width="250" height="34" rx="5"/><text class="b-title" x="885" y="156" text-anchor="middle">dryness</text>
+          <rect class="box trained"    x="760" y="184" width="250" height="34" rx="5"/><text class="b-title" x="885" y="206" text-anchor="middle">oiliness</text>
+          <rect class="box pretrained" x="760" y="234" width="250" height="34" rx="5"/><text class="b-title" x="885" y="256" text-anchor="middle">wrinkles</text>
+          <rect class="box trained"    x="760" y="284" width="250" height="34" rx="5"/><text class="b-title" x="885" y="306" text-anchor="middle">pigmentation</text>
+          <rect class="box cv"         x="760" y="334" width="250" height="34" rx="5"/><text class="b-title" x="885" y="356" text-anchor="middle">redness</text>
+          <rect class="box cv"         x="760" y="384" width="250" height="34" rx="5"/><text class="b-title" x="885" y="406" text-anchor="middle">enlarged pores</text>
+          <rect class="box cv"         x="760" y="434" width="250" height="34" rx="5"/><text class="b-title" x="885" y="456" text-anchor="middle">blackheads</text>
+          <rect class="box cv"         x="760" y="484" width="250" height="34" rx="5"/><text class="b-title" x="885" y="506" text-anchor="middle">dark spots</text>
+        </g>
+
+        <!-- edges: custom -->
+        <path class="edge" d="M282 60  C 520 55  540 51  758 51"  marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 66  C 520 100 540 101 758 101" marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 74  C 520 140 540 151 758 151" marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 82  C 520 180 540 201 758 201" marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 92  C 520 260 540 301 758 301" marker-end="url(#ah4)"/>
+        <!-- edges: HF fallback (dashed) -->
+        <path class="edge dash" d="M282 160 C 520 120 540 105 758 105" marker-end="url(#ah4)"/>
+        <path class="edge dash" d="M282 170 C 520 160 540 155 758 155" marker-end="url(#ah4)"/>
+        <path class="edge dash" d="M282 182 C 520 200 540 205 758 205" marker-end="url(#ah4)"/>
+        <path class="edge dash" d="M282 190 C 520 90  540 58  758 55"  marker-end="url(#ah4)"/>
+        <!-- edges: YOLO -->
+        <path class="edge" d="M282 283 C 520 200 540 60 758 60" marker-end="url(#ah4)"/>
+        <!-- edges: U-Net -->
+        <path class="edge" d="M282 369 C 520 320 540 252 758 252" marker-end="url(#ah4)"/>
+        <!-- edges: CV -->
+        <path class="edge" d="M282 486 C 520 420 540 353 758 353" marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 492 C 520 450 540 403 758 403" marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 500 C 520 480 540 453 758 453" marker-end="url(#ah4)"/>
+        <path class="edge" d="M282 508 C 520 520 540 503 758 503" marker-end="url(#ah4)"/>
+        <!-- cross feeds -->
+        <path class="edge thin" d="M282 88 C 480 300 480 400 758 405" marker-end="url(#ah4)"/>
+        <path class="edge thin" d="M282 96 C 500 340 500 500 758 505" marker-end="url(#ah4)"/>
+
+        <text class="elab" x="470" y="300">custom-model heads also refine two CV estimates</text>
+        <text class="elab warn" x="620" y="332">pigmentation → not_available on the fallback path</text>
+      </svg>
+    </div>
+    <figcaption>Ten conditions, five producers. Dryness and oiliness are not separate models —
+    they are read off the skin-type head's class probabilities. The four CV-engine conditions are
+    always surfaced to the user as <em>estimated</em>, never <em>detected</em>.</figcaption>
+  </figure>
+
+  <!-- ============================================ FIG 05 ============================================ -->
+  <figure class="fig">
+    <div class="fig-head"><span class="fig-no">Fig. 05</span><h2>The offline training pipeline</h2></div>
+    <div class="fig-scroll">
+      <svg class="dg" viewBox="0 0 1200 540" role="img"
+           aria-label="Offline pipeline. Data sources ACNE04 and FFHQ feed prepare_dataset.py, which crops faces and produces labels — real acne grades, distilled skin-type labels, heuristic pigmentation labels — plus domain harmonisation. train_custom.py caches frozen-backbone features and trains three heads, emitting custom_skin_model.pt, which the runtime loads with no network. A parallel branch downloads the third-party checkpoints.">
+        <defs>
+          <marker id="ah5" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" class="ahead"/>
+          </marker>
+        </defs>
+
+        <rect class="lane" x="20" y="20" width="1160" height="380" rx="9"/>
+        <text class="lane-label" x="38" y="44">OFFLINE — run once, not in the request path</text>
+
+        <!-- sources -->
+        <rect class="box" x="36" y="120" width="180" height="150" rx="6"/>
+        <text class="b-title" x="126" y="150" text-anchor="middle">data sources</text>
+        <text class="b-sub"   x="126" y="182" text-anchor="middle">ACNE04 — real</text>
+        <text class="b-sub"   x="126" y="197" text-anchor="middle">Hayashi grades 0–3</text>
+        <text class="b-sub"   x="126" y="223" text-anchor="middle">FFHQ — curated</text>
+        <text class="b-sub"   x="126" y="238" text-anchor="middle">clean faces</text>
+
+        <!-- prepare -->
+        <rect class="box" x="256" y="60" width="336" height="300" rx="6"/>
+        <text class="b-title" x="424" y="86" text-anchor="middle">scripts/prepare_dataset.py</text>
+        <text class="b-sub" x="278" y="116">• 224px face crops (shared MediaPipe)</text>
+        <text class="b-sub" x="278" y="140">• acne label — REAL grade from filename</text>
+        <text class="b-sub" x="278" y="164">• skin type — DISTILLED from local</text>
+        <text class="b-sub" x="292" y="178">ViT teacher (dima806)</text>
+        <text class="b-sub" x="278" y="202">• pigmentation — HEURISTIC weak label</text>
+        <text class="b-sub" x="292" y="216">(CIELAB L* spread + dark-spot area)</text>
+        <text class="b-sub" x="278" y="240">• domain harmonisation:</text>
+        <text class="b-sub" x="292" y="254">FFHQ → ACNE04 capture stats</text>
+        <rect class="box" x="278" y="278" width="292" height="62" rx="5"/>
+        <text class="b-sub" x="424" y="300" text-anchor="middle">datasets/processed/</text>
+        <text class="b-sub" x="424" y="316" text-anchor="middle">crops · train/val CSV</text>
+        <text class="b-sub" x="424" y="331" text-anchor="middle">label_provenance.json</text>
+
+        <!-- train -->
+        <rect class="box" x="632" y="60" width="340" height="300" rx="6"/>
+        <text class="b-title" x="802" y="86" text-anchor="middle">training/train_custom.py</text>
+        <text class="b-sub" x="654" y="116">• frozen MobileNetV3-S trunk →</text>
+        <text class="b-sub" x="668" y="130">feature cache (runs/feature_cache)</text>
+        <text class="b-sub" x="654" y="154">• train the 3 classifier heads only</text>
+        <text class="b-sub" x="654" y="178">• acne head — ordinal Smooth-L1 + CE</text>
+        <text class="b-sub" x="654" y="202">• report macro-F1 · QWK · grade MAE</text>
+        <rect class="box trained" x="654" y="230" width="296" height="106" rx="5"/>
+        <text class="b-title" x="802" y="256" text-anchor="middle">weights/custom_skin_model.pt</text>
+        <text class="b-sub" x="802" y="276" text-anchor="middle">state_dict + config + metrics</text>
+        <text class="b-sub" x="802" y="296" text-anchor="middle">+ runs/training_report.txt</text>
+        <text class="b-sub" x="802" y="320" text-anchor="middle">(viva-facing provenance report)</text>
+
+        <!-- runtime -->
+        <rect class="box trained" x="1000" y="140" width="176" height="120" rx="6"/>
+        <text class="b-title" x="1088" y="176" text-anchor="middle">runtime load</text>
+        <text class="b-sub" x="1088" y="200" text-anchor="middle">backbone rebuilt</text>
+        <text class="b-sub" x="1088" y="215" text-anchor="middle">pretrained=False</text>
+        <text class="b-sub" x="1088" y="235" text-anchor="middle">NO network →</text>
+        <text class="b-sub" x="1088" y="250" text-anchor="middle">Fig. 03</text>
+
+        <path class="edge" d="M216 195 L254 195" marker-end="url(#ah5)"/>
+        <path class="edge" d="M592 210 L630 210" marker-end="url(#ah5)"/>
+        <path class="edge" d="M972 250 L998 210 L998 210" marker-end="url(#ah5)"/>
+        <path class="edge" d="M950 283 C 980 300 990 240 1000 214" marker-end="url(#ah5)"/>
+
+        <!-- parallel: pretrained fetch -->
+        <rect class="box" x="256" y="428" width="336" height="86" rx="6"/>
+        <text class="b-title" x="424" y="456" text-anchor="middle">scripts/fetch_models.py</text>
+        <text class="b-sub" x="424" y="476" text-anchor="middle">one-time download from Hugging Face</text>
+        <text class="b-sub" x="424" y="492" text-anchor="middle">→ weights/hf_models/ (git-ignored)</text>
+
+        <rect class="box pretrained" x="632" y="428" width="340" height="86" rx="6"/>
+        <text class="b-title" x="802" y="456" text-anchor="middle">HF ViT · YOLOv8s · wrinkle U-Net</text>
+        <text class="b-sub" x="802" y="476" text-anchor="middle">used directly at runtime —</text>
+        <text class="b-sub" x="802" y="492" text-anchor="middle">detectors + skin-type/acne fallback</text>
+
+        <path class="edge" d="M592 471 L630 471" marker-end="url(#ah5)"/>
+        <path class="edge" d="M972 465 C 1030 460 1050 320 1080 262" marker-end="url(#ah5)"/>
+      </svg>
+    </div>
+    <figcaption>The trunk is ImageNet-pretrained and frozen — only the three heads learn, on
+    ~20&nbsp;minutes of CPU. Labels are deliberately mixed-provenance and every column is documented
+    in <code>label_provenance.json</code>: real ACNE04 grades, teacher-distilled skin type, and
+    self-generated heuristic pigmentation weak labels.</figcaption>
+  </figure>
+
+</div>

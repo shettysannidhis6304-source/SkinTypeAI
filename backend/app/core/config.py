@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        protected_namespaces=(),   # allow `model_weights_path` (not a pydantic model attr)
     )
 
     # --- Auth ---
@@ -34,44 +35,34 @@ class Settings(BaseSettings):
     upload_dir: Path = BACKEND_DIR / "uploads"
     max_upload_size_mb: int = 10
 
-    # --- ACTIVE: multi-condition pretrained-model analysis ---
-    # Every model below is a PUBLIC pretrained checkpoint (nothing trained here).
-    # Provenance/licences: weights/skin_analysis_models.metadata.json + models/skin_analysis/registry.py
-    # CPU only on this machine. Model dirs live under weights/hf_models/ (git-ignored).
     ml_device: str = "cpu"
     ml_torch_threads: int = 4
 
-    # --- Custom multi-task model (trained by this project; replaces the HF ViTs) ---
-    # When use_custom_model is True AND the checkpoint exists, skin_type / dryness /
-    # oiliness / acne-severity / pigmentation are produced by our own trained model
-    # (models/custom_multi_task.py). The HF path stays as an automatic fallback for
-    # when the checkpoint is missing. See training/train_custom.py.
-    use_custom_model: bool = True
-    custom_model_weights_path: str = str(PROJECT_ROOT / "weights" / "custom_skin_model.pt")
-
-    skin_type_model_dir: Path = PROJECT_ROOT / "weights" / "hf_models" / "skin_type_vit"
-    acne_severity_model_dir: Path = PROJECT_ROOT / "weights" / "hf_models" / "acne_severity_vit"
-    acne_detector_weights: Path = PROJECT_ROOT / "weights" / "hf_models" / "acne_detector_yolo" / "acne_detector_best.pt"
-    acne_detector_conf: float = 0.25
-    acne_detector_iou: float = 0.45
-    acne_detector_imgsz: int = 640
-    wrinkle_weights: Path = PROJECT_ROOT / "weights" / "hf_models" / "wrinkle_unet" / "wrinkle_model.safetensors"
-    wrinkle_enabled: bool = True          # CC BY-NC-SA weights; academic use only. Set false to disable.
-    wrinkle_threshold: float = 0.5
-    heuristics_enabled: bool = True       # redness + pores ESTIMATES (never labelled "detected")
-
-    # --- Legacy: standalone ACNE04 YOLO11 detector (own-trained proof artifact) ---
-    # Not on the active path (the acne detector is acne_detector_weights above);
-    # weights/skin_yolo11n.pt is kept as an academic-integrity record only.
-    yolo_weights_path: Path = PROJECT_ROOT / "weights" / "skin_yolo11n.pt"
-    yolo_conf_threshold: float = 0.25
-    yolo_iou_threshold: float = 0.45
-    yolo_imgsz: int = 640
-    yolo_device: str = "cpu"
+    # --- ACTIVE: from-scratch SkinAnalysisModel (models/skin_analysis_model.py) ---
+    # 403,656-param CNN (4 conv stages + 2 SE blocks) trained 100% from scratch
+    # (training/train_skin_analysis.py) -- NO pretrained weights, NO timm, NO
+    # ImageNet. Produces 5 characteristics: acne | wrinkles | oiliness | dryness |
+    # pigmentation. skin_type is DERIVED deterministically from oiliness + dryness.
+    # The remaining 4 (redness / dark_spots / enlarged_pores / blackheads) come
+    # from models/skin_analysis/opencv_engine.py::OpenCVSkinAnalyzer (deterministic
+    # OpenCV, not machine learning).
+    #
+    # The retired stacks (MobileNetV3 multi-task ViT, the dima806 / skintelligent
+    # ViTs, the glowlytics YOLOv8 acne detector, the FFHQ-Wrinkle U-Net, the
+    # ACNE04 YOLO11 proof) have been removed -- their code lives under
+    # legacy_models/ and scripts/benchmark_system.py hardcodes its own paths.
+    model_weights_path: str = "weights/skin_analysis_model.pt"   # resolved via resolve_model_weights()
 
 
 settings = Settings()
 settings.upload_dir.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_model_weights() -> Path:
+    """Absolute path to the active SkinAnalysisModel checkpoint. `model_weights_path`
+    may be relative (to the project root) or absolute."""
+    p = Path(settings.model_weights_path)
+    return p if p.is_absolute() else (PROJECT_ROOT / p)
 
 
 def resolve_upload_path(stored: str) -> Path:

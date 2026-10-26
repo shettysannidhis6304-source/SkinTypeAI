@@ -1,10 +1,16 @@
 @echo off
-REM Runs the SkinType AI backend API on http://127.0.0.1:8000
+REM Runs the SkinType AI backend API on port 8000, bound to 0.0.0.0 so a phone
+REM on the same Wi-Fi can reach it for the "Use Phone Camera" QR capture.
+REM (Open it in a browser at http://127.0.0.1:8000 on this machine as usual.)
 REM Not meant to be double-clicked directly -- use start-servers.bat instead
 REM (this one is called by it, and stays open so you can see server logs).
 REM
 REM Uses .venv-new (the rebuilt Python 3.11 environment). The old .venv is
 REM broken (Python 3.12 with mismatched compiled packages) -- do not use it.
+REM
+REM NOTE: the first time this binds 0.0.0.0, Windows may pop a Firewall prompt
+REM ("Allow python to communicate on ...") -- tick "Private networks" and Allow,
+REM otherwise your phone will not be able to connect.
 
 set "PYEXE=%~dp0.venv-new\Scripts\python.exe"
 if not exist "%PYEXE%" (
@@ -16,7 +22,7 @@ if not exist "%PYEXE%" (
 )
 
 cd /d "%~dp0backend"
-"%PYEXE%" -m uvicorn app.main:app --port 8000
+"%PYEXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 echo.
 echo Backend stopped. Press any key to close this window.

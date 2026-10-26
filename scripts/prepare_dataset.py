@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
 import logging
 import random
@@ -67,6 +68,7 @@ NNEW_DIR = PROJECT_ROOT / "datasets" / "external" / "_extracted" / "Classificati
 OUT_DIR = PROJECT_ROOT / "datasets" / "processed"
 CROPS_DIR = OUT_DIR / "crops"
 CLEAR_FACES_DIR = OUT_DIR / "clear_faces"     # produced by scripts/fetch_clear_faces.py
+HARMONIZED_DIR = OUT_DIR / "clear_faces_harmonized"   # domain-matched copies (see harmonize_clear_faces)
 SKIN_TYPE_TEACHER_DIR = PROJECT_ROOT / "weights" / "hf_models" / "skin_type_vit"
 
 CONVERSION_MANIFEST = PROJECT_ROOT / "datasets" / "skin_detect" / "conversion_manifest.json"
@@ -135,6 +137,144 @@ def face_crop(path: Path) -> np.ndarray | None:
     if crop.size == 0:
         return None
     return cv2.resize(crop, (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_AREA)
+
+
+# ============================================================ domain harmonization
+# The FFHQ clean-face crops are studio-grade (sharp, neutral white balance); the
+# ACNE04 crops are clinical-camera photos. Left alone, the model can separate the
+# two datasets -- and therefore predict "clear / normal" -- from sensor sharpness
+# and colour temperature instead of skin content. We push the FFHQ crops toward
+# ACNE04 capture statistics (blur + downscale + WB jitter + noise + JPEG) so that
+# shortcut is closed. Applied to the FFHQ subset ONLY; ACNE04 crops are untouched.
+def _laplacian_var(bgr: np.ndarray) -> float:
+    """Variance of the Laplacian = a standard image-sharpness proxy."""
+    return float(cv2.Laplacian(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+
+
+def _domain_stats(paths: list[Path], sample: int = 150) -> dict:
+    """Mean sharpness + mean per-channel value over a sample -- the two axes a
+    model would exploit to tell FFHQ from ACNE04."""
+    ps = list(paths)
+    if len(ps) > sample:
+        ps = random.Random(SEED).sample(ps, sample)
+    sharp: list[float] = []
+    means: list[np.ndarray] = []
+    for p in ps:
+        im = cv2.imread(str(p))
+        if im is None:
+            continue
+        sharp.append(_laplacian_var(im))
+        means.append(im.reshape(-1, 3).mean(axis=0))
+    if not sharp:
+        return {"n": 0}
+    return {
+        "n": len(sharp),
+        "sharpness_lapvar_mean": round(float(np.mean(sharp)), 1),
+        "channel_mean_bgr": [round(float(x), 1) for x in np.mean(means, axis=0)],
+    }
+
+
+def _harmonize_one(bgr: np.ndarray, rng: np.random.Generator,
+                   target_bgr_mean: np.ndarray) -> np.ndarray:
+    """One FFHQ studio crop -> ACNE04-like statistics. Deterministic given rng.
+    TARGET-AWARE: because both subsets already pass through the same 224px crop
+    pipeline their sharpness is close, so the real studio-vs-clinic gap is colour
+    temperature / exposure. We move this crop's channel means toward the ACNE04
+    mean (with jitter so it is not a perfect giveaway the other way), then add a
+    light clinical-camera blur + noise + JPEG. Deliberately subtle: the
+    'clear / normal' labels must stay visually valid."""
+    out = bgr.astype(np.float32)
+
+    # 1) colour-temperature / exposure match toward the ACNE04 channel means
+    cur = out.reshape(-1, 3).mean(axis=0)
+    tgt = target_bgr_mean.astype(np.float32) * rng.uniform(0.97, 1.03, size=3).astype(np.float32)
+    out *= np.clip(tgt / np.maximum(cur, 1.0), 0.85, 1.18)[None, None, :]
+
+    # 2) light optical blur toward the clinical sharpness level (never far below it)
+    if rng.random() < 0.5:
+        out = cv2.GaussianBlur(out, (0, 0), sigmaX=float(rng.uniform(0.3, 0.6)))
+
+    # 3) mild sensor noise
+    out += rng.normal(0.0, float(rng.uniform(1.0, 3.0)), size=out.shape).astype(np.float32)
+    out = np.clip(out, 0, 255).astype(np.uint8)
+
+    # 4) clinical-grade JPEG recompression
+    ok, enc = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(82, 95))])
+    return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else out
+
+
+def harmonize_clear_faces(clear_files: list[Path], acne04_crop_dir: Path,
+                          seed: int) -> tuple[list[Path], dict]:
+    """Degrade every FFHQ clear-face crop toward ACNE04 capture statistics, write
+    the results to HARMONIZED_DIR, and run a before/after safety check against
+    the ACNE04 crop statistics. Returns (harmonized_paths, provenance_meta).
+    Always regenerates from the pristine clear_faces/ source -> idempotent."""
+    HARMONIZED_DIR.mkdir(parents=True, exist_ok=True)
+
+    acne_stats = _domain_stats(sorted(acne04_crop_dir.glob("*.jpg")))
+    before = _domain_stats(clear_files)
+    target_bgr = np.array(acne_stats.get("channel_mean_bgr") or [70.0, 90.0, 117.0], dtype=np.float32)
+
+    out_paths: list[Path] = []
+    for f in clear_files:
+        bgr = cv2.imread(str(f))
+        if bgr is None:
+            continue
+        seed_int = int(hashlib.sha1(f"{seed}:{f.name}".encode()).hexdigest()[:8], 16)
+        dst = HARMONIZED_DIR / f.name
+        cv2.imwrite(str(dst), _harmonize_one(bgr, np.random.default_rng(seed_int), target_bgr),
+                    [cv2.IMWRITE_JPEG_QUALITY, 92])
+        out_paths.append(dst)
+
+    after = _domain_stats(out_paths)
+
+    def _sharp_gap(a: dict) -> float | None:
+        if not a.get("sharpness_lapvar_mean") or not acne_stats.get("sharpness_lapvar_mean"):
+            return None
+        return round(abs(a["sharpness_lapvar_mean"] - acne_stats["sharpness_lapvar_mean"])
+                     / acne_stats["sharpness_lapvar_mean"], 3)
+
+    def _color_gap(a: dict) -> float | None:
+        if not a.get("channel_mean_bgr") or not acne_stats.get("channel_mean_bgr"):
+            return None
+        av, rv = np.array(a["channel_mean_bgr"]), np.array(acne_stats["channel_mean_bgr"])
+        return round(float(np.abs(av - rv).mean() / max(rv.mean(), 1e-6)), 3)
+
+    s_before, s_after = _sharp_gap(before), _sharp_gap(after)
+    c_before, c_after = _color_gap(before), _color_gap(after)
+    reduced = (
+        (s_after is not None and s_before is not None and s_after <= s_before + 0.02)
+        and (c_after is not None and c_before is not None and c_after < c_before)
+    )
+
+    meta = {
+        "applied_to": "FFHQ clear_faces subset ONLY (ACNE04 crops untouched)",
+        "reason": "prevent lighting / resolution shortcuts: without this the model can tell "
+                  "FFHQ (studio) from ACNE04 (clinical) by white balance / exposure (and, to a "
+                  "lesser extent, sensor sharpness) and predict 'clear / normal' from the domain "
+                  "rather than the skin.",
+        "transforms": ["per-channel colour match toward the ACNE04 mean (gain 0.85-1.18) + jitter",
+                       "gaussian blur sigma 0.3-0.6 (p=0.5)", "gaussian sensor noise std 1-3",
+                       "JPEG recompress q82-94"],
+        "deterministic": "per-file rng seeded by sha1(f'{seed}:{filename}') -> byte-reproducible",
+        "source_dir": CLEAR_FACES_DIR.relative_to(PROJECT_ROOT).as_posix(),
+        "output_dir": HARMONIZED_DIR.relative_to(PROJECT_ROOT).as_posix(),
+        "safety_check": {
+            "metric": "relative gap of FFHQ vs ACNE04 on (a) mean Laplacian-variance sharpness "
+                      "and (b) mean per-channel value",
+            "acne04_crops": acne_stats,
+            "ffhq_before": before,
+            "ffhq_after": after,
+            "sharpness_relgap_before": s_before,
+            "sharpness_relgap_after": s_after,
+            "color_relgap_before": c_before,
+            "color_relgap_after": c_after,
+            "shortcut_gap_reduced": bool(reduced),
+        },
+    }
+    logger.info("clear-face harmonization [%s]: sharpness rel-gap %s->%s | colour rel-gap %s->%s",
+                "OK" if reduced else "WARN", s_before, s_after, c_before, c_after)
+    return out_paths, meta
 
 
 # ============================================================ pigmentation heuristic
@@ -349,11 +489,18 @@ def main() -> int:
     #  "clear" acne / "normal" skin-type / "normal" pigmentation examples.)
     clear_records: list[tuple[str, str, str, str]] = []   # (rel_path, skin_type, acne, pigment)
     clear_files = sorted(CLEAR_FACES_DIR.glob("*.jpg")) if CLEAR_FACES_DIR.is_dir() else []
+
+    # ---- domain harmonization: match FFHQ studio crops to ACNE04 capture stats ----
+    harmonization_meta: dict = {}
+    if clear_files:
+        clear_files, harmonization_meta = harmonize_clear_faces(clear_files, CROPS_DIR, args.seed)
+
     for f in clear_files:
         rel = f.relative_to(PROJECT_ROOT).as_posix()
         clear_records.append((rel, CLEAR_FACE_LABELS["skin_type"],
                               CLEAR_FACE_LABELS["acne_severity"], CLEAR_FACE_LABELS["pigmentation"]))
-    logger.info("clean-face crops ingested: %d (labels fixed: %s)", len(clear_records), CLEAR_FACE_LABELS)
+    logger.info("clean-face crops ingested: %d (harmonized, labels fixed: %s)",
+                len(clear_records), CLEAR_FACE_LABELS)
 
     # ---- Phase 4: build unified records, stratified split, write CSVs ----
     records: list[tuple[str, str, str, str]] = [
@@ -436,6 +583,9 @@ def main() -> int:
             },
         },
         "clear_face_labels": CLEAR_FACE_LABELS,
+        "dataset_harmonization": harmonization_meta or {
+            "applied": False, "reason": "no FFHQ clear_faces crops present at prepare time",
+        },
         "skipped": skipped,
     }
     (OUT_DIR / "label_provenance.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")

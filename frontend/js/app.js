@@ -50,7 +50,7 @@
   function severityPill(entry) {
     if (!entry || entry.score == null) return '';
     const s = entry.score;
-    const [lbl, cls] = s >= 0.67 ? ['High', 'attention'] : s >= 0.34 ? ['Moderate', 'moderate'] : ['Mild', 'good'];
+    const [lbl, cls] = s >= 0.67 ? ['High', 'attention'] : s >= 0.34 ? ['Moderate', 'moderate'] : ['Low', 'good'];
     return `<span class="pill ${cls}">${lbl}</span>`;
   }
 
@@ -328,15 +328,21 @@
         <div class="hint">${shi.value >= 65 ? "You're doing well — keep following your routine." : 'A few areas could use attention. See your plan.'}</div>`;
     })();
 
+    const scoreChip = (c) => {
+      const s = (c && typeof c.score === 'number') ? c.score : null;
+      if (s == null) return '';
+      const [, cls] = s >= 0.67 ? ['', 'attention'] : s >= 0.34 ? ['', 'moderate'] : ['', 'good'];
+      return `<span class="pill ${cls} score-chip" title="Severity 0–1">${s.toFixed(2)}</span>`;
+    };
     const concernRows = CFG.CONDITIONS.map(({ key, label, tier, icon }) => {
       const c = results && results.conditions ? results.conditions[key] : null;
       let right;
       if (tier === 'unavailable' || (c && c.status === 'not_available')) right = `<span class="pill na">Not supported</span>`;
       else if (!c || !results) right = `<span class="pill neutral">—</span>`;
-      else if (c.status === 'estimated') right = `${severityPill(c)}<span class="pill estimate">Est.</span>`;
+      else if (c.status === 'estimated') right = `${scoreChip(c)}${severityPill(c)}<span class="pill estimate">Est.</span>`;
       else if (c.status === 'error') right = `<span class="pill attention">Error</span>`;
       else if (key === 'skin_type') right = `<span class="pill good">${esc(cap(c.label || '—'))}</span>`;
-      else right = severityPill(c) || `<span class="pill ai">Detected</span>`;
+      else right = `${scoreChip(c)}${severityPill(c) || '<span class="pill ai">Detected</span>'}`;
       return `<div class="crow"><span class="cname"><i class="fa-solid ${icon}"></i>${label}</span><span class="cright">${right}</span></div>`;
     }).join('');
 
@@ -420,6 +426,244 @@
 
   // ============================================================== SCAN
   App._scan = { file: null, stream: null, dataUrl: null };
+
+  // ---- shared modal + analysis-flow helpers (Scan screen) --------------
+  function closeModal() { const m = qs('#si-modal'); if (m) m.remove(); }
+  function openModal(inner, opts) {
+    closeModal();
+    const size = opts && opts.xl ? 'xl' : opts && opts.wide ? 'wide' : '';
+    const wrap = h(`<div class="si-modal-scrim" id="si-modal"><div class="si-modal ${size}" role="dialog" aria-modal="true"></div></div>`);
+    wrap.querySelector('.si-modal').appendChild(inner);
+    wrap.addEventListener('click', (e) => { if (e.target === wrap && !(opts && opts.sticky)) closeModal(); });
+    const onEsc = (e) => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onEsc); } };
+    document.addEventListener('keydown', onEsc);
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+
+  function analyzeOverlay() {
+    const o = h(`<div class="analyzing"><div class="box"><div class="ring2"></div><b>Analysing your skin…</b><div class="muted" style="margin-top:6px">Running the vision models — up to ~30s on the first scan.</div></div></div>`);
+    document.body.appendChild(o);
+    return o;
+  }
+  function finishScan(pred) {
+    App.state.lastAnalysis = pred;
+    App.state.lastRecommendation = pred.recommendation || null;
+    App.state.historyCache = null;
+    location.hash = '#/result/' + pred.id;
+  }
+
+  // Run analysis for a freshly uploaded file OR an existing image id.
+  // Honours the advisory quality gate: a <=6/10 photo opens the advisory modal.
+  async function analyzeFlow({ file, imageId, getCtx, previewUrl, onError }) {
+    const ctx = getCtx ? getCtx() : null;
+    const overlay = analyzeOverlay();
+    try {
+      const pred = file
+        ? await API.scan(file, ctx)
+        : await API.predict(imageId, ctx, false);
+      overlay.remove();
+      if (pred && pred.status === 'advisory') {
+        let pv = previewUrl || App._scan.dataUrl || null;
+        if (!pv && pred.image_id != null) {
+          try { pv = App.trackBlob(await API.imageBlobUrl(Number(pred.image_id))); } catch (_) { /* no preview */ }
+        }
+        openAdvisoryModal(pred, {
+          getCtx,
+          previewUrl: pv,
+          imageId: pred.temp_image_id || pred.image_id || pred._imageId,
+        });
+        return;
+      }
+      finishScan(pred);
+    } catch (ex) {
+      overlay.remove();
+      if (onError) onError(ex); else toast(ex.message, 'err');
+    }
+  }
+
+  async function proceedAnyway(imageId, getCtx) {
+    const overlay = analyzeOverlay();
+    try {
+      const pred = await API.predict(imageId, getCtx ? getCtx() : null, true);
+      overlay.remove();
+      finishScan(pred);
+    } catch (ex) {
+      overlay.remove();
+      toast(ex.message, 'err');
+    }
+  }
+
+  function openAdvisoryModal(pred, { getCtx, previewUrl, imageId }) {
+    const q = pred.quality || {};
+    const score = q.score != null ? q.score : '?';
+    const badgeCls = q.score >= 6 ? 'good' : q.score >= 4 ? 'moderate' : 'attention';
+    const inner = h(`<div class="si-advisory">
+      <div class="si-modal-head"><h3><i class="fa-solid fa-triangle-exclamation"></i> Check your photo quality</h3>
+        <button class="si-x" aria-label="Close">&times;</button></div>
+      <div class="si-adv-body">
+        <div class="si-adv-preview">${previewUrl ? `<img src="${esc(previewUrl)}" alt="Captured photo">` : `<div class="si-adv-noimg"><i class="fa-solid fa-image"></i></div>`}</div>
+        <div class="si-adv-info">
+          <div class="si-qbadge ${badgeCls}">Photo Quality: ${esc(String(score))}/10 ${q.label ? '· ' + esc(q.label) : ''}</div>
+          <p class="si-adv-note">Photo quality directly influences analysis accuracy. Built-in webcams often blur fine pores and micro-textures.</p>
+          <p class="si-adv-msg">${esc(q.message || q.advisory || '')}</p>
+        </div>
+      </div>
+      <div class="si-modal-foot">
+        <button class="btn btn-ghost btn-sm" data-act="retake"><i class="fa-solid fa-rotate-left"></i> Retake photo</button>
+        <button class="btn btn-primary btn-sm" data-act="proceed">Proceed with ${esc(String(score))}/10 photo</button>
+      </div>
+    </div>`);
+    inner.querySelector('.si-x').onclick = closeModal;
+    inner.querySelector('[data-act="retake"]').onclick = () => {
+      closeModal();
+      App._scan.file = null; App._scan.dataUrl = null;
+      const rb = qs('#run-btn'); if (rb) rb.disabled = true;
+      const pv = qs('#preview'); if (pv) pv.classList.add('hidden');
+      const ph = qs('#ph'); if (ph) ph.classList.remove('hidden');
+      const st = qs('#scan-status'); if (st) st.textContent = 'Retake your photo — steady camera, even lighting.';
+      const cb = qs('#cam-btn'); if (cb) cb.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    inner.querySelector('[data-act="proceed"]').onclick = () => {
+      closeModal();
+      proceedAnyway(imageId, getCtx);
+    };
+    openModal(inner, { sticky: true });
+  }
+
+  function openPhoneCameraModal(getCtx) {
+    const inner = h(`<div class="si-phone">
+      <div class="si-modal-head"><h3><i class="fa-solid fa-mobile-screen-button"></i> Use your phone camera</h3>
+        <button class="si-x" aria-label="Close">&times;</button></div>
+      <div class="si-tabs">
+        <button class="si-tab active" data-tab="qr">QR code capture</button>
+        <button class="si-tab" data-tab="webcam">Phone as wireless webcam</button>
+      </div>
+      <div class="si-tab-body" data-body="qr">
+        <p class="si-adv-note">Phone cameras are far sharper than a built-in laptop webcam — better for pores, fine wrinkles and blackheads.</p>
+        <div class="si-warn" id="si-warn" hidden></div>
+        <div class="si-qr" id="si-qr"><div class="empty" style="padding:24px"><i class="fa-solid fa-spinner fa-spin"></i> Generating a secure link…</div></div>
+        <ol class="si-steps">
+          <li>Make sure your phone and this laptop are on the <b>exact same Wi-Fi</b> network.</li>
+          <li>Scan the QR code, or type the URL above into your phone's browser.</li>
+          <li>Snap a high-res selfie — it appears here automatically and analysis begins.</li>
+          <li>If it won't connect, allow <b>Python</b> through Windows Defender Firewall on <b>Private networks</b>.</li>
+        </ol>
+        <div class="si-ipfix">
+          <label for="si-ip">Laptop IP</label>
+          <input id="si-ip" type="text" inputmode="decimal" placeholder="192.168.x.x" autocomplete="off">
+          <button class="btn btn-ghost btn-sm" id="si-ip-go"><i class="fa-solid fa-rotate"></i> Regenerate QR</button>
+        </div>
+        <div class="si-poll muted" id="si-poll">Waiting for your phone…</div>
+        <button class="btn btn-ghost btn-sm" id="si-regen" hidden><i class="fa-solid fa-rotate"></i> Generate a new code</button>
+      </div>
+      <div class="si-tab-body" data-body="webcam" hidden>
+        <p class="si-adv-note">Turn your phone into a normal webcam your browser can pick from the camera dropdown.</p>
+        <ol class="si-steps">
+          <li>Install a virtual-camera app: <b>DroidCam</b>, <b>Iriun Webcam</b>, or Windows 11 <b>Phone Link</b> (mobile camera).</li>
+          <li>Connect the phone and laptop (same Wi-Fi or USB) and open the companion app on both.</li>
+          <li>Back here, click <b>Take webcam photo</b> and choose the phone camera from the browser's video-input dropdown for an HD feed.</li>
+        </ol>
+      </div>
+    </div>`);
+    inner.querySelector('.si-x').onclick = () => { stopPhonePoll(); closeModal(); };
+    inner.querySelectorAll('.si-tab').forEach((t) => t.onclick = () => {
+      inner.querySelectorAll('.si-tab').forEach((x) => x.classList.toggle('active', x === t));
+      inner.querySelectorAll('.si-tab-body').forEach((b) => b.hidden = b.dataset.body !== t.dataset.tab);
+    });
+    const wrap = openModal(inner, { sticky: true, wide: true });
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) { stopPhonePoll(); closeModal(); } });
+    startPhoneSession(inner, getCtx);
+  }
+
+  App._phonePoll = null;
+  function stopPhonePoll() { if (App._phonePoll) { clearInterval(App._phonePoll); App._phonePoll = null; } }
+
+  const PHONE_POLL_MS = 1500;
+  const PHONE_TIMEOUT_MS = 150000;   // stop waiting after 2.5 min
+
+  async function startPhoneSession(modalEl, getCtx, ipOverride) {
+    stopPhonePoll();
+    const box = qs('#si-qr', modalEl);
+    const warnEl = qs('#si-warn', modalEl);
+    const pollEl = qs('#si-poll', modalEl);
+    const regenBtn = qs('#si-regen', modalEl);
+    const ipInput = qs('#si-ip', modalEl);
+    const ipGo = qs('#si-ip-go', modalEl);
+    const rerun = (ov) => startPhoneSession(modalEl, getCtx, ov);
+    if (ipGo) ipGo.onclick = () => rerun((ipInput && ipInput.value.trim()) || undefined);
+    if (ipInput) ipInput.onkeydown = (e) => { if (e.key === 'Enter') ipGo.click(); };
+    if (regenBtn) regenBtn.hidden = true;
+    if (warnEl) warnEl.hidden = true;
+    if (box) box.innerHTML = `<div class="empty" style="padding:24px"><i class="fa-solid fa-spinner fa-spin"></i> Generating a secure link…</div>`;
+    if (pollEl) { pollEl.textContent = 'Waiting for your phone…'; pollEl.className = 'si-poll muted'; }
+
+    let sess;
+    try { sess = await API.createQrSession(ipOverride); }
+    catch (ex) {
+      if (box) box.innerHTML = `<div class="empty" style="padding:20px">${esc(ex.message)}</div>`;
+      if (regenBtn) { regenBtn.hidden = false; regenBtn.onclick = () => rerun(ipOverride); }
+      return;
+    }
+
+    if (ipInput && sess.local_ip && !ipInput.value.trim()) ipInput.value = sess.local_ip;
+
+    // surface backend warnings (bad IP / bound to localhost / virtual adapter)
+    const warns = Array.isArray(sess.warnings) ? sess.warnings : [];
+    if (sess.ip_confident === false) warns.unshift('This laptop has no Wi-Fi / LAN address right now — the phone cannot connect. Connect to Wi-Fi and regenerate, set the IP manually below, or use the "Phone as wireless webcam" tab.');
+    if (warnEl && warns.length) {
+      warnEl.hidden = false;
+      warnEl.innerHTML = warns.map((w) => `<div><i class="fa-solid fa-triangle-exclamation"></i> ${esc(w)}</div>`).join('');
+    }
+
+    if (box) {
+      const src = sess.qr_png || sess.qr_svg;
+      const u = esc(sess.capture_url);
+      box.innerHTML = src
+        ? `<div class="si-qr-img"><img src="${esc(src)}" alt="QR code — scan with your phone" width="260" height="260"></div>
+           <div class="si-qr-url">On your phone, open:<br><a href="${u}" target="_blank" rel="noopener">${u}</a>
+             <button class="si-copy" type="button" title="Copy URL"><i class="fa-regular fa-copy"></i></button></div>`
+        : `<div class="si-qr-fallback"><b>Open this on your phone:</b><br><a href="${u}" target="_blank" rel="noopener">${u}</a></div>`;
+      const cp = qs('.si-copy', box);
+      if (cp) cp.onclick = () => {
+        (navigator.clipboard ? navigator.clipboard.writeText(sess.capture_url) : Promise.reject())
+          .then(() => toast('URL copied', '')).catch(() => toast('Copy failed — long-press the link', 'warn'));
+      };
+    }
+
+    const started = Date.now();
+    let failStreak = 0;
+    App._phonePoll = setInterval(async () => {
+      if (Date.now() - started > PHONE_TIMEOUT_MS) {
+        stopPhonePoll();
+        if (pollEl) { pollEl.textContent = 'No photo received yet. If the link would not open on your phone, check you are on the same Wi-Fi.'; pollEl.className = 'si-poll err'; }
+        if (regenBtn) { regenBtn.hidden = false; regenBtn.onclick = () => rerun(ipOverride); }
+        return;
+      }
+      let st;
+      try { st = await API.sessionStatus(sess.session_id); failStreak = 0; }
+      catch (ex) {
+        failStreak += 1;
+        if (ex.status === 404) {
+          stopPhonePoll();
+          if (pollEl) { pollEl.textContent = 'This code expired. Generate a new one.'; pollEl.className = 'si-poll err'; }
+          if (regenBtn) { regenBtn.hidden = false; regenBtn.onclick = () => rerun(ipOverride); }
+        } else if (failStreak >= 3 && pollEl) {
+          pollEl.textContent = 'Trouble reaching the server — retrying…';
+          pollEl.className = 'si-poll err';
+        }
+        return;
+      }
+      if (st && st.status === 'ready' && st.image_id) {
+        stopPhonePoll();
+        if (pollEl) { pollEl.textContent = 'Photo received — starting analysis…'; pollEl.className = 'si-poll ok'; }
+        setTimeout(() => { closeModal(); analyzeFlow({ imageId: st.image_id, getCtx }); }, 500);
+      } else if (pollEl && failStreak === 0) {
+        pollEl.textContent = 'Waiting for your phone…'; pollEl.className = 'si-poll muted';
+      }
+    }, PHONE_POLL_MS);
+  }
+
   function viewScan() {
     const s = App._scan;
     const env = loadEnv() || { env_mode: 'current_location' };
@@ -435,7 +679,8 @@
           </div>
           <div class="quality-bar hidden" id="quality"></div>
           <div class="scan-controls">
-            <button class="btn btn-ghost btn-sm" id="cam-btn"><i class="fa-solid fa-video"></i> Use camera</button>
+            <button class="btn btn-ghost btn-sm" id="cam-btn"><i class="fa-solid fa-video"></i> Take webcam photo</button>
+            <button class="btn btn-ghost btn-sm" id="phone-btn"><i class="fa-solid fa-mobile-screen-button"></i> Use phone camera</button>
             <label class="btn btn-ghost btn-sm" style="cursor:pointer"><i class="fa-solid fa-upload"></i> Upload photo
               <input type="file" id="file-in" accept="image/jpeg,image/png,image/webp" class="hidden"></label>
             <button class="btn btn-ghost btn-sm hidden" id="cap-btn"><i class="fa-solid fa-circle"></i> Capture</button>
@@ -502,7 +747,7 @@
     function stopCam() {
       if (App._scan.stream) { App._scan.stream.getTracks().forEach((t) => t.stop()); App._scan.stream = null; }
       cam.classList.add('hidden'); guide.style.display = 'none'; qs('#cap-btn').classList.add('hidden');
-      qs('#cam-btn').innerHTML = '<i class="fa-solid fa-video"></i> Use camera';
+      qs('#cam-btn').innerHTML = '<i class="fa-solid fa-video"></i> Take webcam photo';
       if (!App._scan.file) { ph.classList.remove('hidden'); runBtn.disabled = true; }
     }
     qs('#cap-btn').onclick = () => {
@@ -528,25 +773,23 @@
       r.readAsDataURL(f);
     };
 
+    qs('#phone-btn').onclick = () => { stopCam(); openPhoneCameraModal(collectContext); };
+
     runBtn.onclick = async () => {
       if (!App._scan.file) return;
-      const ctx = collectContext();
-      const overlay = h(`<div class="analyzing"><div class="box"><div class="ring2"></div><b>Analysing your skin…</b><div class="muted" style="margin-top:6px">Running the vision models — up to ~30s on the first scan.</div></div></div>`);
-      document.body.appendChild(overlay);
       runBtn.disabled = true; runBtn.innerHTML = '<span class="spinner"></span> Analysing…';
-      try {
-        const pred = await API.scan(App._scan.file, ctx);
-        App.state.lastAnalysis = pred;
-        App.state.lastRecommendation = pred.recommendation || null;
-        App.state.historyCache = null;
-        overlay.remove();
-        location.hash = '#/result/' + pred.id;
-      } catch (ex) {
-        overlay.remove();
-        runBtn.disabled = false; runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Run analysis';
-        status.textContent = ex.status === 401 ? 'Session expired — please log in again.' : ex.message;
-        toast(ex.message, 'err');
-      }
+      const resetBtn = () => { runBtn.disabled = false; runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Run analysis'; };
+      await analyzeFlow({
+        file: App._scan.file,
+        getCtx: collectContext,
+        previewUrl: App._scan.dataUrl,
+        onError: (ex) => {
+          resetBtn();
+          status.textContent = ex.status === 401 ? 'Session expired — please log in again.' : ex.message;
+          toast(ex.message, 'err');
+        },
+      });
+      resetBtn();
     };
 
     function collectContext() {
@@ -673,13 +916,22 @@
     }
 
     const shiCol = shi.value == null ? 'var(--text-muted)' : shi.value >= 65 ? 'var(--good)' : shi.value >= 50 ? 'var(--moderate)' : 'var(--attention)';
+    const q = results.quality || null;
+    const qBadgeCls = !q ? '' : q.score >= 6 ? 'good' : q.score >= 4 ? 'moderate' : 'attention';
+    const qBadge = q ? `<span class="pill ${qBadgeCls}" title="${esc(q.message || '')}">Photo quality ${esc(String(q.score))}/10${q.label ? ' · ' + esc(q.label) : ''}</span>` : '';
     view.innerHTML = `
-      <div class="view-head"><h1>Analysis Results</h1><p class="muted">${esc(date)} · ${esc(time)} · model set <code>${esc(results.analysis_version || modelVersion)}</code></p></div>
+      <div class="view-head"><h1>Analysis Results</h1><p class="muted">${esc(date)} · ${esc(time)} · model set <code>${esc(results.analysis_version || modelVersion)}</code> ${qBadge}</p>
+      ${q && q.is_suboptimal ? `<p class="muted" style="font-size:.82rem;margin-top:4px"><i class="fa-solid fa-circle-info"></i> ${esc(q.message || '')}</p>` : ''}</div>
 
       <div class="grid-3">
         <div class="card card-pad">
-          <div class="card-title-row"><h3>Image</h3>${results.face_detected ? '<span class="pill good">Face detected</span>' : '<span class="pill neutral">No face box</span>'}</div>
-          <div class="result-figure"><canvas id="rcanvas"></canvas></div>
+          <div class="card-title-row"><h3>Image inspector</h3>
+            <span style="display:flex;align-items:center;gap:8px">
+              ${results.face_detected ? '<span class="pill good">Face detected</span>' : '<span class="pill neutral">No face box</span>'}
+              <button class="insp-expand" id="insp-expand" title="Enlarge inspector" aria-label="Enlarge inspector"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+            </span>
+          </div>
+          ${inspectorMarkup()}
           <div class="legend">
             <span class="li"><span class="pill ai" style="padding:2px 8px">AI</span> model result</span>
             <span class="li"><span class="pill estimate" style="padding:2px 8px">Est.</span> computer-vision estimate</span>
@@ -697,8 +949,8 @@
                    stroke-dasharray="${2 * Math.PI * 76}" stroke-dashoffset="${2 * Math.PI * 76 - (shi.value / 100) * 2 * Math.PI * 76}"></circle></svg>
                  <div class="val"><b>${shi.value}</b><small>/100</small></div></div>
                <div class="band ${shi.band}">${cap(shi.band.replace('_', ' '))}</div>
-               <div class="hint" style="text-align:left;margin-top:14px"><b>How this is calculated</b><br><span style="font-size:.8rem">${esc(shi.formula || 'Deterministic formula from the model-backed and estimated conditions.')}</span></div>
-               <div class="hint" style="text-align:left"><span style="font-size:.8rem">Contributing: ${esc((shi.basis || []).join(', ') || 'none')}</span></div>`}
+               <div class="hint" style="text-align:left"><span style="font-size:.8rem">Contributing: ${esc((shi.basis || []).join(', ') || 'none')}</span></div>
+               ${!results.xai_insights ? `<div class="hint" style="text-align:left;margin-top:10px"><b>How this is calculated</b><br><span style="font-size:.8rem">${esc(shi.formula || 'Deterministic formula from the model-backed and estimated conditions.')}</span></div>` : `<div class="hint" style="text-align:left;margin-top:6px"><span style="font-size:.8rem">See <b>Why your score</b> below for the plain-language breakdown.</span></div>`}`}
         </div>
         <div class="card card-pad">
           <div class="card-title-row"><h3>Summary</h3></div>
@@ -708,6 +960,8 @@
           ${rec && rec.disclaimer ? `<p class="muted" style="font-size:.78rem;margin-top:10px">${esc(rec.disclaimer)}</p>` : ''}
         </div>
       </div>
+
+      ${xaiInsightsBlock(results.xai_insights, shi)}
 
       <div class="card card-pad mt-18">
         <div class="card-title-row"><h3>Condition breakdown</h3></div>
@@ -722,7 +976,54 @@
         ${rec ? `<button class="btn btn-soft btn-sm" onclick="location.hash='#/plan'">See my plan</button>` : ''}
       </div>`;
 
-    drawResultCanvas(imageId, results);
+    buildInspector(qs('.inspector'), imageId, results);
+    const exp = qs('#insp-expand');
+    if (exp) exp.onclick = () => openInspectorModal(imageId, results);
+  }
+
+  // Plain-language "why this score" card from the backend's xai_insights.
+  function xaiInsightsBlock(xai, shi) {
+    if (!xai || !xai.condition_rationales) return '';
+    const drv = xai.shi_drivers || {};
+    const drivers = Array.isArray(drv.primary_drivers) ? drv.primary_drivers : [];
+    const rats = xai.condition_rationales || {};
+    const CN = (k) => (CFG.CONDITIONS.find((c) => c.key === k) || { label: cap(k.replace('_', ' ')) }).label;
+
+    const driverList = drivers.length
+      ? `<ul class="xai-drivers">${drivers.map((x) => `
+          <li>
+            <div class="xai-dh"><b>${esc(CN(x.condition))}</b>
+              <span class="pill ${x.model_backed ? 'ai' : 'estimate'}" style="padding:1px 7px">${x.model_backed ? 'model' : 'estimate'}</span>
+              <span class="xai-share">−${esc(String(x.penalty_points))} pts${x.share_pct != null ? ' · ' + esc(String(x.share_pct)) + '% of the drop' : ''}</span>
+            </div>
+            <div class="xai-rat">${esc(x.rationale || '')}</div>
+          </li>`).join('')}</ul>`
+      : `<p class="muted" style="font-size:.88rem">Nothing is currently pulling your Skin Health Index down.</p>`;
+
+    const notable = Object.entries(rats)
+      .filter(([, v]) => v && (v.status === 'detected' || v.status === 'estimated') && v.observation)
+      .map(([k, v]) => `<div class="xai-obs"><b>${esc(CN(k))}${v.severity ? ' — ' + esc(String(v.severity)) : ''}</b><span>${esc(v.observation)}</span></div>`)
+      .join('');
+
+    return `<div class="card card-pad mt-18 xai-card">
+      <div class="card-title-row"><h3>Why your score${shi && shi.value != null ? ' is ' + shi.value : ''}</h3>
+        <span class="pill neutral">Explainable AI</span></div>
+      <p class="xai-lead">${esc(drv.note || 'Plain-language notes on what the models and the computer-vision engine measured.')}</p>
+      ${driverList}
+      ${notable ? `<div class="card-title-row" style="margin-top:16px"><h3 style="font-size:.95rem">What each check found</h3></div>
+        <div class="xai-obs-list">${notable}</div>` : ''}
+      ${shi && shi.formula ? `<details class="xai-formula"><summary>How the score is computed</summary>
+        <p class="muted" style="font-size:.8rem;margin:8px 0 0">${esc(shi.formula)}</p></details>` : ''}
+      ${xai.method_note ? `<p class="muted" style="font-size:.76rem;margin-top:10px">${esc(xai.method_note)}</p>` : ''}
+    </div>`;
+  }
+
+  // A 0-1 severity number for a condition entry (null when it has no numeric score).
+  function condScore(entry) {
+    return entry && typeof entry.score === 'number' ? entry.score : null;
+  }
+  function scoreBand(s) {
+    return s >= 0.67 ? ['High', 'attention'] : s >= 0.34 ? ['Moderate', 'moderate'] : ['Low', 'good'];
   }
 
   function condCard({ key, label, tier, icon }, entry) {
@@ -736,16 +1037,22 @@
       <div class="cl">The model for this condition failed on this image.</div></div>`;
     const isCv = tier === 'cv';
     const est = !isCv && entry.status === 'estimated';
-    const pct = typeof entry.score === 'number' ? Math.round(entry.score * 100) : null;
+    const s = condScore(entry);
+    const pct = s != null ? Math.round(s * 100) : null;
     const pillCls = isCv ? 'cv' : est ? 'estimate' : 'ai';
     const pillTxt = isCv ? 'CV scan' : est ? 'Estimate' : 'AI';
     const confWord = isCv ? 'analysis' : 'model';
+    const [bandLbl, bandCls] = s != null ? scoreBand(s) : ['', ''];
     return `<div class="cond-card ${isCv ? 'cv' : est ? 'est' : ''}">
       <div class="ch"><span class="cn"><i class="fa-solid ${icon}"></i> ${label}</span>
         <span class="pill ${pillCls}">${pillTxt}</span></div>
       <div class="cl">${esc(entry.label || '—')}</div>
-      ${pct != null ? `<div class="cbar"><span style="width:${pct}%"></span></div>` : ''}
-      ${entry.confidence != null ? `<div class="cmeta">${confWord} confidence ${Math.round(entry.confidence * 100)}%</div>`
+      ${pct != null ? `<div class="cbar-wrap" title="Severity 0.00 (none) to 1.00 (most severe)">
+          <div class="cbar"><span style="width:${pct}%"></span></div>
+          <span class="cbar-num ${bandCls}">${s.toFixed(2)}<small>/1</small></span>
+        </div>
+        <div class="cmeta">Severity ${s.toFixed(2)} · ${bandLbl}${entry.confidence != null ? ` · ${confWord} confidence ${Math.round(entry.confidence * 100)}%` : ''}</div>`
+        : entry.confidence != null ? `<div class="cmeta">${confWord} confidence ${Math.round(entry.confidence * 100)}%</div>`
         : est ? `<div class="cmeta">${esc(badge.text)} — no confidence score</div>` : ''}
     </div>`;
   }
@@ -755,7 +1062,10 @@
       ? arr.map((s) => `<div class="step"><span class="sx"><i class="fa-solid ${icon}"></i></span><div class="sbody"><b>${esc(s)}</b></div></div>`).join('')
       : `<p class="muted">Nothing specific for this result.</p>`;
     const per = rec.per_condition || {};
-    return `<div class="grid-2 mt-18">
+    return `
+    ${barrierRepairCard(rec)}
+    ${safetyBanner(rec)}
+    <div class="grid-2 mt-18">
       <div class="card card-pad">
         <div class="card-title-row"><h3>Suggested routine</h3></div>${list(rec.routine, 'fa-check')}
         <div class="card-title-row" style="margin-top:16px"><h3>Ingredients to look for</h3></div>${list(rec.ingredients, 'fa-flask')}
@@ -770,44 +1080,157 @@
     </div>`;
   }
 
-  async function drawResultCanvas(imageId, results) {
-    const canvas = qs('#rcanvas'); if (!canvas) return;
-    const acne = results.conditions && results.conditions.acne;
-    const dets = (acne && acne.detail && Array.isArray(acne.detail.detections)) ? acne.detail.detections : [];
-    let url;
-    try { url = App.trackBlob(await API.imageBlobUrl(imageId)); } catch (_) { return; }
-    const img = new Image();
-    const redraw = () => {
-      const [ow, oh] = results.image_size || [img.naturalWidth, img.naturalHeight];
-      const cw = Math.min(canvas.parentElement.clientWidth || 360, ow);
-      const sc = cw / ow;
-      canvas.width = Math.round(ow * sc); canvas.height = Math.round(oh * sc);
-      const cx = canvas.getContext('2d');
-      cx.clearRect(0, 0, canvas.width, canvas.height);
-      cx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      cx.lineWidth = Math.max(2, canvas.width / 260); cx.strokeStyle = '#e8613c'; cx.fillStyle = '#e8613c';
-      cx.font = `${Math.max(11, Math.round(canvas.width / 42))}px "Plus Jakarta Sans", sans-serif`;
-      dets.forEach((d) => {
-        const [x1, y1, x2, y2] = d.bbox.map((v) => v * sc);
-        cx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        const tag = `acne ${Math.round(d.confidence * 100)}%`;
-        const tw = cx.measureText(tag).width + 6, th = parseInt(cx.font, 10) + 4;
-        cx.fillRect(x1, Math.max(0, y1 - th), tw, th);
-        cx.save(); cx.fillStyle = '#fff'; cx.fillText(tag, x1 + 3, Math.max(th - 4, y1 - 4)); cx.restore();
-      });
-      if (!dets.length) {
-        cx.save(); cx.fillStyle = 'rgba(0,0,0,.55)'; cx.fillRect(0, canvas.height - 26, canvas.width, 26);
-        cx.fillStyle = '#fff'; cx.fillText('No discrete acne lesions localised', 8, canvas.height - 8); cx.restore();
-      }
+  // Multi-layer image inspector: Original / AI Focus (Grad-CAM) / Analysis Zones.
+  // Class-scoped so it can render both inline and inside the "enlarge" modal.
+  function inspectorMarkup(opts) {
+    const big = opts && opts.big ? ' inspector-big' : '';
+    return `<div class="inspector${big}">
+      <div class="insp-stage">
+        <img class="insp-base" alt="Analysed photo">
+        <img class="insp-layer" alt="" hidden>
+        <div class="insp-status" hidden></div>
+      </div>
+      <div class="layer-btns">
+        <button class="lb active" data-layer="original"><i class="fa-solid fa-image"></i> Original</button>
+        <button class="lb" data-layer="gradcam"><i class="fa-solid fa-fire"></i> AI Focus</button>
+        <button class="lb" data-layer="zones"><i class="fa-solid fa-draw-polygon"></i> Analysis Zones</button>
+      </div>
+      <div class="insp-sub insp-sub-gradcam" hidden>
+        <div class="insp-heads">
+          <button class="hpill active" data-head="acne">Acne</button>
+          <button class="hpill" data-head="wrinkles">Wrinkles</button>
+        </div>
+        <label class="insp-blend">Blend
+          <input type="range" class="gc-opacity" min="0" max="100" value="60">
+          <span class="gc-opacity-val">60%</span>
+        </label>
+        <p class="insp-tip"><i class="fa-solid fa-circle-info"></i> Visualizes the high-activation skin patterns influencing the neural network's decision.</p>
+      </div>
+      <div class="insp-sub insp-sub-zones" hidden>
+        <div class="zones-legend">
+          <span><i class="zdot" style="background:#eb5a5a"></i> Redness / erythema &mdash; full skin region</span>
+          <span><i class="zdot" style="background:#3c96eb"></i> Dark spots &amp; pigmentation &mdash; cheeks + forehead</span>
+          <span><i class="zdot" style="background:#3ec89a"></i> Pores &amp; blackheads &mdash; T-zone, nasal wings, chin</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  async function buildInspector(root, imageId, results) {
+    if (!root) return;
+    const base = qs('.insp-base', root), layer = qs('.insp-layer', root), statusEl = qs('.insp-status', root);
+    const opac = qs('.gc-opacity', root), opacVal = qs('.gc-opacity-val', root);
+    const cache = {};                 // "mode[:head]" -> objectURL
+    let curLayer = 'original', curHead = 'acne';
+
+    const setStatus = (msg, err) => {
+      if (!statusEl) return;
+      if (!msg) { statusEl.hidden = true; return; }
+      statusEl.hidden = false; statusEl.textContent = msg;
+      statusEl.classList.toggle('err', !!err);
     };
-    img.onload = () => { redraw(); App._redraw = redraw; };
-    img.src = url;
+
+    try { base.src = App.trackBlob(await API.imageBlobUrl(imageId)); }
+    catch (_) { setStatus('Could not load the analysed photo.', true); return; }
+
+    async function overlayUrl(mode, head) {
+      const key = mode + (mode === 'gradcam' ? ':' + head : '');
+      if (cache[key]) return cache[key];
+      setStatus(mode === 'gradcam' ? 'Computing Grad-CAM heatmap…' : 'Building the measurement-zone overlay…');
+      layer.classList.add('loading');
+      try {
+        const url = App.trackBlob(await API.overlayBlobUrl(imageId, mode, head));
+        cache[key] = url; setStatus(null); return url;
+      } finally { layer.classList.remove('loading'); }
+    }
+
+    function applyOpacity() {
+      layer.style.opacity = curLayer === 'gradcam' ? String(Number(opac.value) / 100)
+        : curLayer === 'zones' ? '0.9' : '0';
+    }
+
+    async function showOverlay(mode) {
+      let url;
+      try { url = await overlayUrl(mode, curHead); }
+      catch (ex) { layer.hidden = true; setStatus(ex.message || 'Overlay unavailable.', true); return; }
+      layer.src = url; layer.hidden = false; applyOpacity();
+    }
+
+    async function setLayer(l) {
+      curLayer = l;
+      qsa('.lb', root).forEach((b) => b.classList.toggle('active', b.dataset.layer === l));
+      qs('.insp-sub-gradcam', root).hidden = l !== 'gradcam';
+      qs('.insp-sub-zones', root).hidden = l !== 'zones';
+      if (l === 'original') { layer.hidden = true; setStatus(null); return; }
+      await showOverlay(l === 'gradcam' ? 'gradcam' : 'zones');
+    }
+
+    qsa('.lb', root).forEach((b) => b.onclick = () => setLayer(b.dataset.layer));
+    qsa('.hpill', root).forEach((p) => p.onclick = async () => {
+      curHead = p.dataset.head;
+      qsa('.hpill', root).forEach((x) => x.classList.toggle('active', x === p));
+      if (curLayer === 'gradcam') await showOverlay('gradcam');
+    });
+    if (opac) opac.oninput = () => { opacVal.textContent = opac.value + '%'; applyOpacity(); };
+  }
+
+  function openInspectorModal(imageId, results) {
+    const faceTag = results && results.face_detected
+      ? '<span class="pill good">Face detected</span>' : '<span class="pill neutral">No face box</span>';
+    const inner = h(`<div class="si-imod">
+      <div class="si-modal-head"><h3><i class="fa-solid fa-magnifying-glass-plus"></i> Image inspector ${faceTag}</h3>
+        <button class="si-x" aria-label="Close">&times;</button></div>
+      <div class="si-imod-body">${inspectorMarkup({ big: true })}</div>
+      <div class="si-modal-foot">
+        <span class="muted" style="font-size:.78rem;margin-right:auto">Toggle a layer, then adjust the Grad-CAM blend or read the zone legend.</span>
+        <button class="btn btn-ghost btn-sm si-x2">Close</button>
+      </div>
+    </div>`);
+    inner.querySelectorAll('.si-x, .si-x2').forEach((b) => b.onclick = closeModal);
+    openModal(inner, { xl: true });
+    buildInspector(inner.querySelector('.inspector'), imageId, results);
   }
 
   // ============================================================ HISTORY
+  // SVG trend line of the Skin Health Index across every past scan that produced one.
+  function shiTrendChart(hist) {
+    const pts = (hist || [])
+      .filter((r) => r.results && r.results.skin_health_index && r.results.skin_health_index.value != null)
+      .map((r) => ({ t: new Date(r.created_at).getTime(), v: r.results.skin_health_index.value }))
+      .sort((a, b) => a.t - b.t);
+    if (!pts.length) return '';
+    const w = 720, h = 210, pl = 40, pr = 16, ptop = 16, pbot = 34;
+    const iw = w - pl - pr, ih = h - ptop - pbot;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const X = (t) => pl + (t1 === t0 ? iw / 2 : ((t - t0) / (t1 - t0)) * iw);
+    const Y = (v) => ptop + ih - (Math.max(0, Math.min(100, v)) / 100) * ih;
+    const grid = [0, 50, 65, 80, 100].map((g) =>
+      `<line x1="${pl}" y1="${Y(g).toFixed(1)}" x2="${w - pr}" y2="${Y(g).toFixed(1)}" class="tg-grid"></line>
+       <text x="${pl - 7}" y="${(Y(g) + 3.5).toFixed(1)}" class="tg-ylab">${g}</text>`).join('');
+    const last = pts[pts.length - 1].v;
+    const col = last >= 65 ? 'var(--good)' : last >= 50 ? 'var(--moderate)' : 'var(--attention)';
+    const poly = pts.length > 1
+      ? `<polyline points="${pts.map((p) => X(p.t).toFixed(1) + ',' + Y(p.v).toFixed(1)).join(' ')}" class="tg-line" style="stroke:${col}"></polyline>` : '';
+    const dots = pts.map((p) =>
+      `<circle cx="${X(p.t).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="4.5" class="tg-dot" style="fill:${col}">
+        <title>${esc(new Date(p.t).toLocaleDateString())} — SHI ${p.v}/100</title></circle>`).join('');
+    const fmt = (t) => new Date(t).toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    const xlab = `<text x="${pl}" y="${h - 12}" class="tg-xlab">${esc(fmt(t0))}</text>`
+      + (t1 !== t0 ? `<text x="${w - pr}" y="${h - 12}" class="tg-xlab" text-anchor="end">${esc(fmt(t1))}</text>` : '');
+    return `<div class="card card-pad trend-card">
+      <div class="card-title-row"><h3>Skin Health Index over time</h3>
+        <span class="pill ${last >= 65 ? 'good' : last >= 50 ? 'moderate' : 'attention'}">now ${last}/100</span></div>
+      <svg class="trend-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Skin Health Index trend">
+        ${grid}${poly}${dots}${xlab}
+      </svg>
+      <p class="muted" style="font-size:.78rem;margin-top:4px">${pts.length} scan${pts.length === 1 ? '' : 's'} with a Skin Health Index. Hover a point for its date and score.</p>
+    </div>`;
+  }
+
   async function viewHistory(nav) {
     const view = qs('#view');
     view.innerHTML = `<div class="view-head"><h1>Scan History</h1><p>Every scan you run while logged in is saved here.</p></div>
+      <div id="trend-slot"></div>
       <div class="card card-pad"><div id="hlist"><div class="empty"><i class="fa-solid fa-spinner fa-spin"></i>Loading…</div></div></div>`;
     let hist;
     try { hist = await API.history(); App.state.historyCache = hist; }
@@ -815,6 +1238,7 @@
     if (nav != null && !App.isCurrent(nav)) return;
     if (!hist.length) { qs('#hlist').innerHTML = `<div class="empty"><i class="fa-solid fa-image"></i>No scans yet.<br><button class="linklike" onclick="location.hash='#/scan'">Run your first scan</button></div>`; return; }
 
+    qs('#trend-slot').innerHTML = shiTrendChart(hist);
     qs('#hlist').className = 'hist-list';
     qs('#hlist').innerHTML = hist.map((r) => {
       const { date, time } = fmtDateTime(r.created_at);
@@ -831,26 +1255,66 @@
   }
 
   // ============================================================ PLAN
-  function splitRoutine(routine) {
-    const items = (routine || []).map((s) => s.trim());
-    const isCleanse = (l) => /cleanser|cleanse|double cleanse/i.test(l);
-    const isSpf = (l) => /spf|sunscreen/i.test(l);
-    const isMoist = (l) => /moisturi[sz]er|moisturi[sz]e/i.test(l);
-    const amTreat = items.filter((s) => /vitamin c|antioxidant|niacinamide|azelaic|spot-treat|benzoyl/i.test(s) && !isCleanse(s) && !isSpf(s) && !isMoist(s));
-    const pmTreat = items.filter((s) => /retinoid|retinol|bha|salicylic|adapalene|leave-on|exfoli|treatment/i.test(s) && !isCleanse(s) && !isSpf(s) && !isMoist(s));
-    const uniq = (a) => [...new Set(a)].slice(0, 3);
-    const am = [
-      { t: 'Cleanser', d: items.find(isCleanse) || 'Gentle, pH-balanced cleanser' },
-      ...uniq(amTreat.length ? amTreat : ['Antioxidant serum (optional)']).map((d) => ({ t: 'Treatment', d })),
-      { t: 'Moisturiser', d: items.find(isMoist) || 'Lightweight, barrier-supporting moisturiser' },
-      { t: 'Sunscreen', d: items.find(isSpf) || 'Broad-spectrum SPF 30+' },
-    ];
-    const pm = [
-      { t: 'Cleanser', d: 'Gentle cleanser (double cleanse if wearing SPF/make-up)' },
-      ...uniq(pmTreat.length ? pmTreat : ['Repeat AM treatment or skip']).map((d) => ({ t: 'Treatment', d })),
-      { t: 'Moisturiser', d: items.find(isMoist) || 'Richer moisturiser at night' },
-    ];
-    return { am, pm };
+  // Short human labels for the backend's contraindication rule ids.
+  const SAFETY_LABEL = {
+    retinoid_x_exfoliant_acid: 'Alternate nights',
+    vitamin_c_x_benzoyl_peroxide: 'Separate AM / PM',
+    photosensitisers_pm_only: 'PM only',
+    spf50_mandatory_with_photosensitisers: 'SPF 50 required',
+    separate_bpo_and_retinoid: 'Separate benzoyl peroxide & retinoid',
+    introduce_actives_gradually: 'Introduce gradually',
+    avoid_high_strength_acids_with_erythema: 'Reactive skin',
+    barrier_repair_protocol: 'Barrier repair',
+  };
+
+  // Amber safety banner from recommendation.contraindications (+ photosensitiser list).
+  function safetyBanner(rec) {
+    if (!rec) return '';
+    const flags = (rec.contraindications || []).filter((f) => f && f.message);
+    const ps = rec.photosensitisers_pm_only || [];
+    if (!flags.length && !ps.length) return '';
+    const rows = flags.map((f) => {
+      const tag = SAFETY_LABEL[f.rule] || SAFETY_LABEL[f.action] || (f.severity === 'high' ? 'Important' : 'Note');
+      return `<li class="sf-${esc(f.severity || 'info')}"><b>${esc(tag)}:</b> ${esc(f.message)}</li>`;
+    });
+    if (ps.length && !flags.some((f) => f.rule === 'photosensitisers_pm_only')) {
+      rows.push(`<li class="sf-info"><b>Photosensitive → PM:</b> ${esc(ps.join(', '))} scheduled for the evening routine only.</li>`);
+    }
+    return `<div class="card card-pad safety-banner mt-18">
+      <div class="card-title-row"><h3><i class="fa-solid fa-triangle-exclamation"></i> Safety &amp; contraindications</h3></div>
+      <ul class="safety-list">${rows.join('')}</ul>
+    </div>`;
+  }
+
+  // Dedicated Barrier Recovery card when recommendation.barrier_repair fired.
+  function barrierRepairCard(rec) {
+    const br = rec && rec.barrier_repair;
+    if (!br) return '';
+    const ings = (br.ingredients || []).map((i) => `<span class="pill good" style="margin:3px 4px 0 0">${esc(i)}</span>`).join('');
+    const steps = (br.protocol || []).map((s, i) => `<div class="step"><span class="sx">${i + 1}</span><div class="sbody"><span>${esc(s)}</span></div></div>`).join('');
+    return `<div class="card card-pad barrier-card mt-18">
+      <div class="card-title-row"><h3><i class="fa-solid fa-shield-heart"></i> Barrier Recovery protocol</h3><span class="pill attention">Priority</span></div>
+      <p class="muted" style="font-size:.88rem;margin:2px 0 12px">${esc(br.reason || 'Your skin barrier looks compromised — pause active ingredients and focus on repair.')}</p>
+      ${steps}
+      ${ings ? `<div style="margin-top:12px"><b style="font-size:.9rem">Prioritise:</b><br>${ings}</div>` : ''}
+    </div>`;
+  }
+
+  function routineColumn(title, icon, steps, prefix, dp) {
+    if (!steps || !steps.length) {
+      return `<div class="routine-col"><h4><i class="fa-solid ${icon}"></i> ${title}</h4>
+        <p class="muted" style="font-size:.85rem">Structured steps aren't stored for this record — see the routine list on the analysis page.</p></div>`;
+    }
+    return `<div class="routine-col"><h4><i class="fa-solid ${icon}"></i> ${title}</h4>
+      ${steps.map((s, i) => {
+        const id = prefix + i; const isDone = !!dp[id];
+        const actives = (s.actives || []).map((a) => `<span class="ractive">${esc(a)}</span>`).join('');
+        return `<div class="step ${isDone ? 'done' : ''}"><span class="sx">${i + 1}</span>
+          <div class="sbody"><b>${esc(s.step || 'Step')}</b>
+            ${s.detail ? `<span>${esc(s.detail)}</span>` : ''}
+            ${actives ? `<div class="ractives">${actives}</div>` : ''}</div>
+          <label class="schk"><input type="checkbox" data-step="${id}" ${isDone ? 'checked' : ''}></label></div>`;
+      }).join('')}</div>`;
   }
 
   async function viewPlan(nav) {
@@ -864,36 +1328,33 @@
       const withRec = hist.find((r) => r.recommendation);
       rec = withRec ? withRec.recommendation : null;
     }
-    const { am, pm } = splitRoutine(rec && rec.routine);
+    // Consume the backend's structured routines directly — no regex splitting.
+    const am = (rec && rec.am_routine) || [];
+    const pm = (rec && rec.pm_routine) || [];
     const progress = planProgress();
     const dayKey = new Date().toISOString().slice(0, 10);
     const dp = progress[dayKey] || {};
     const targeted = rec && rec.per_condition ? Object.keys(rec.per_condition)
-      .map((k) => (CFG.CONDITIONS.find((c) => c.key === k) || { label: k }).label) : [];
+      .filter((k) => k !== 'barrier_repair')
+      .map((k) => (CFG.CONDITIONS.find((c) => c.key === k) || { label: cap(k.replace('_', ' ')) }).label) : [];
 
     const total = am.length + pm.length;
-    const done = Object.values(dp).filter(Boolean).length;
-
-    const col = (title, steps, prefix) => `
-      <div class="routine-col"><h4>${title}</h4>
-      ${steps.map((s, i) => {
-        const id = prefix + i; const isDone = !!dp[id];
-        return `<div class="step ${isDone ? 'done' : ''}"><span class="sx">${i + 1}</span>
-          <div class="sbody"><b>${esc(s.t)}</b><span>${esc(s.d)}</span></div>
-          <label class="schk"><input type="checkbox" data-step="${id}" ${isDone ? 'checked' : ''}></label></div>`;
-      }).join('')}</div>`;
+    const done = am.map((_, i) => 'am' + i).concat(pm.map((_, i) => 'pm' + i)).filter((id) => dp[id]).length;
 
     view.innerHTML = `
       <div class="view-head"><h1>Current Plan &amp; Procedure</h1><p>Skincare guidance generated from your latest analysis and context — not medical advice.</p></div>
       ${!rec ? `<div class="card card-pad empty"><i class="fa-solid fa-clipboard-question"></i>No plan yet. <button class="linklike" onclick="location.hash='#/scan'">Run a scan</button> to generate one.</div>` : `
-      <div class="card card-pad">
-        <div class="card-title-row"><h3>Today's progress</h3><span class="pill ${done === total ? 'good' : 'neutral'}">${done}/${total} steps</span></div>
+      ${barrierRepairCard(rec)}
+      ${safetyBanner(rec)}
+      <div class="card card-pad mt-18">
+        <div class="card-title-row"><h3>Today's progress</h3><span class="pill ${total && done === total ? 'good' : 'neutral'}">${done}/${total} steps</span></div>
         <div class="progress-track"><span style="width:${total ? (done / total) * 100 : 0}%"></span></div>
       </div>
       <div class="grid-2 mt-18">
-        <div class="card card-pad">${col('Morning', am, 'am')}</div>
-        <div class="card card-pad">${col('Evening', pm, 'pm')}</div>
+        <div class="card card-pad">${routineColumn('Morning', 'fa-sun', am, 'am', dp)}</div>
+        <div class="card card-pad">${routineColumn('Evening', 'fa-moon', pm, 'pm', dp)}</div>
       </div>
+      ${rec.spf && rec.spf.reason ? `<div class="card card-pad mt-18 spf-note"><div class="card-title-row"><h3><i class="fa-solid fa-umbrella-beach"></i> Sunscreen</h3><span class="pill ${rec.spf.required ? 'attention' : 'good'}">${esc(rec.spf.product || 'SPF 30+')}</span></div><p class="muted" style="font-size:.88rem;margin:2px 0 0">${esc(rec.spf.reason)}</p></div>` : ''}
       <div class="grid-2 mt-18">
         <div class="card card-pad"><div class="card-title-row"><h3>Concerns being targeted</h3></div>
           ${targeted.length ? targeted.map((t) => `<span class="pill" style="margin:3px 4px 0 0">${esc(t)}</span>`).join('') : '<p class="muted">General maintenance.</p>'}</div>

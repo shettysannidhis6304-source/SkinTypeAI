@@ -33,15 +33,21 @@ datasets/skin_detect/
 # scripts/prepare_dataset.py). label_provenance.json is small text -> keep it.
 datasets/processed/crops/
 datasets/processed/clear_faces/
+datasets/processed/clear_faces_harmonized/
 datasets/processed/*_labels.csv
+# From-scratch rebuild: 128x128 expanded/augmented set (regenerate with
+# scripts/expand_and_prepare_dataset.py). Manifests + provenance are regenerable too.
+datasets/processed_scratch/
 # Trained / downloaded model weights (large binaries) and their local sidecars.
 weights/*.pt
+legacy_models/*.pt
 weights/*.pt.version
 weights/*.test_metrics.json
 weights/*.safetensors
 weights/*.onnx
 weights/hf_models/
 weights/skin_analysis/
+weights/openvino/
 # Keep the small provenance/metadata sidecars tracked (they are text):
 !weights/**/*.metadata.json
 # Ultralytics training run outputs.
